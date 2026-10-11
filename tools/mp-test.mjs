@@ -36,11 +36,22 @@ const rooms = await page.evaluate(async () => {
   });
 });
 console.log('rooms seen by browser:', rooms.map((r) => `${r.id}:${r.name}`).join(', '));
-const roomId = rooms.find((r) => r.mode === 'tdm')?.id || rooms[0].id;
-await page.evaluate((id) => window.__GAME.joinRoom(id), roomId);
+// Play in a fresh room without bots, so bots can't kill the browser player before the scripted
+// player shoots. The browser joins the room it creates automatically.
+await page.evaluate(() => window.__GAME.createRoom({ name: 'mp-test', mapId: 'valley', mode: 'tdm', bots: 0, maxPlayers: 4, timeLimit: 900 }));
 await page.waitForFunction('window.__GAME.state === "playing" && window.__GAME.alive', null, { timeout: 600000, polling: 500 });
+const roomId = await page.evaluate(() => window.__GAME.roomInfo.id);
 const me = await page.evaluate(() => ({ id: window.__GAME.myId, team: window.__GAME.myTeam, pos: window.__GAME.player.body }));
 console.log('browser player in room', roomId, 'id', me.id, 'team', me.team);
+// Record who damages or kills the browser player, to check the scripted player's hits land.
+await page.evaluate(() => {
+  const g = window.__GAME;
+  window.__hurtBy = [];
+  g.transport.onMessage((m) => {
+    if (m.t === 'dmg') window.__hurtBy.push(m.from);
+    if (m.t === 'kill' && m.v === g.myId) window.__hurtBy.push(m.k);
+  });
+});
 
 // Scripted player.
 const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
@@ -56,7 +67,12 @@ ws.on('message', (d) => {
   if (m.t === 'snap') {
     for (const p of m.p) if (p[0] === me.id) targetPos = [p[1], p[2], p[3]];
   }
-  if (m.t === 'welcome') { botId = m.you; ws.send(JSON.stringify({ t: 'deploy' })); }
+  if (m.t === 'welcome') {
+    botId = m.you;
+    // Join the browser player's enemy team (friendly fire is off).
+    ws.send(JSON.stringify({ t: 'team', team: 1 - me.team }));
+    ws.send(JSON.stringify({ t: 'deploy' }));
+  }
   if (m.t === 'spawn' && m.id === botId) {
     // Teleport-ish walk next to the browser player, then shoot them.
     let x = m.x, z = m.z;
@@ -76,16 +92,22 @@ ws.on('message', (d) => {
 });
 ws.send(JSON.stringify({ t: 'hello', name: 'ScriptBot' }));
 ws.send(JSON.stringify({ t: 'join', id: roomId, name: 'ScriptBot' }));
-await new Promise((r) => setTimeout(r, 7000));
-const state = await page.evaluate((bid) => {
-  const g = window.__GAME;
-  return { hp: g.hp, alive: g.alive, remotes: g.remotes.list.map((r) => r.name), sawScriptBot: g.remotes.list.some((r) => r.id === bid), players: g.players.size };
-}, botId);
+// The software-rendered browser can lag well behind the server, so poll instead of a fixed wait.
+let state = null;
+for (let i = 0; i < 90; i++) {
+  await new Promise((r) => setTimeout(r, 1000));
+  state = await page.evaluate((bid) => {
+    const g = window.__GAME;
+    const meRow = g.players.get(g.myId);
+    return { hp: g.hp, alive: g.alive, deaths: meRow?.deaths || 0, hitByScript: window.__hurtBy.includes(bid), remotes: g.remotes.list.map((r) => r.name), sawScriptBot: g.remotes.list.some((r) => r.id === bid), players: g.players.size };
+  }, botId);
+  if (state.sawScriptBot && state.hitByScript) break;
+}
 console.log('browser state:', JSON.stringify(state), 'hits sent', hitsSent, 'ws msgs', JSON.stringify(got));
 await page.screenshot({ path: `${out}/mp.png`, timeout: 300000 });
 ws.close();
 await browser.close();
 cleanup();
-const ok = state.sawScriptBot && (state.hp < 100 || !state.alive) && errors.length === 0;
+const ok = state.sawScriptBot && state.hitByScript && errors.length === 0;
 console.log(ok ? 'MULTIPLAYER TEST PASSED' : 'MULTIPLAYER TEST FAILED');
 process.exit(ok ? 0 : 1);
