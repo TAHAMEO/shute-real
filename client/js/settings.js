@@ -35,7 +35,7 @@ export function defaultSettings() {
     graphics: { preset: 'high', ...GRAPHICS_PRESETS.high, fpsLimit: 0, showFps: false },
     controls: { sensitivity: 1.0, adsSensitivity: 0.8, invertY: false, toggleAds: false, toggleCrouch: true },
     audio: { master: 0.8, sfx: 1.0, ambient: 0.6, ui: 0.8 },
-    gameplay: { fov: 80, crosshair: 'default', crosshairColor: '#ffffff', showMinimap: true, headBob: true },
+    gameplay: { fov: 90, crosshair: 'default', crosshairColor: '#ffffff', showMinimap: true, headBob: true },
   };
 }
 

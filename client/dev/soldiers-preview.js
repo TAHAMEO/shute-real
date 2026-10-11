@@ -124,12 +124,20 @@ if (fp) {
   scene.add(arms.root);
   camera.position.set(0, 0, 0);
   camera.lookAt(0, 0, -1);
+  const fpcam = q.get('fpcam');
+  if (fpcam === 'side') { camera.position.set(0.75, -0.12, -0.3); camera.lookAt(0.08, -0.2, -0.36); }
+  if (fpcam === 'zoomR') { camera.lookAt(0.16, -0.17, -0.36); camera.fov = 26; camera.updateProjectionMatrix(); }
+  if (fpcam === 'zoomL') { camera.lookAt(0.13, -0.17, -0.65); camera.fov = 22; camera.updateProjectionMatrix(); }
+  if (fpcam === 'hand') { camera.position.set(0.45, -0.1, -0.2); camera.lookAt(0.14, -0.2, -0.45); camera.fov = 45; camera.updateProjectionMatrix(); }
+  if (fpcam === 'below') { camera.position.set(0.25, -0.75, -0.2); camera.lookAt(0.08, -0.2, -0.4); }
+  if (fpcam === 'left') { camera.position.set(-0.6, -0.05, -0.45); camera.lookAt(0.08, -0.2, -0.45); }
   const reload = q.get('reload') === '1';
   const step = () => {
     weapon.root.updateMatrixWorld(true);
     arms.update(weapon.anchors.rightHand, q.get('noleft') === '1' ? null : weapon.anchors.leftHand, { leftOverride: reload ? weapon.anchors.magazine : null, snap: true });
   };
   step();
+  window.__fp = { arms, weapon, THREE };
   renderer.render(scene, camera);
   let tris = 0; for (const m of arms.meshes) tris += m.geometry.index.count / 3;
   console.log(`fp arms: ${tris} triangles, ${arms.meshes.length} draw calls, ${arms.bones.length} bones`);

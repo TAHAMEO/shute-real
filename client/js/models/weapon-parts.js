@@ -145,9 +145,9 @@ export function creaseNormals(geo, angle) {
 }
 
 /** Strip to position/normal, make non-indexed, add colour (edge wear along `axis`). */
-export function prep(geo, q, { axis = -1, wear = 1, crease = true, creaseAngle } = {}) {
+export function prep(geo, q, { axis = -1, wear = 1, crease = true, creaseAngle, keepUV = false } = {}) {
   let g = geo.index ? geo.toNonIndexed() : geo;
-  for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+  for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(keepUV && k === 'uv')) g.deleteAttribute(k);
   if (crease) creaseNormals(g, creaseAngle ?? q.crease);
   const n = g.attributes.position.count;
   const col = new Float32Array(n * 3).fill(1);
@@ -282,7 +282,7 @@ export class Builder {
       const t = Array.isArray(o.tint) ? o.tint : [o.tint, o.tint, o.tint];
       for (let i = 0; i < c.length; i += 3) { c[i] *= t[0]; c[i + 1] *= t[1]; c[i + 2] *= t[2]; }
     }
-    boxUV(geo);
+    if (!o.keepUV) boxUV(geo);
     let l = this.lists.get(mat);
     if (!l) { l = []; this.lists.set(mat, l); }
     l.push(geo);

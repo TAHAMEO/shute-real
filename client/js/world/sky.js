@@ -69,8 +69,8 @@ export class SkySystem {
     this.vmSun = new THREE.DirectionalLight(new THREE.Color(env.sun.color), env.sun.intensity * 0.9);
     this.vmSunTarget = new THREE.Object3D();
     this.vmSun.target = this.vmSunTarget;
-    this.vmHemi = new THREE.HemisphereLight(new THREE.Color(env.hemi.sky), new THREE.Color(env.hemi.ground), env.hemi.intensity * 1.1);
-    this.vmFill = new THREE.DirectionalLight(0xffffff, 0.25);
+    this.vmHemi = new THREE.HemisphereLight(new THREE.Color(env.hemi.sky), new THREE.Color(env.hemi.ground), env.hemi.intensity * 1.6);
+    this.vmFill = new THREE.DirectionalLight(0xffffff, 0.6);
     this.vmFill.position.set(-0.5, 0.3, 1);
     this.sunVisibility = 1;
     this._q = new THREE.Quaternion();
@@ -96,9 +96,9 @@ export class SkySystem {
     pmrem.dispose();
     envSky.material.dispose();
     rs.scene.environment = this.envRT.texture;
-    rs.scene.environmentIntensity = this.env.overcast ? 0.8 : 0.55;
+    rs.scene.environmentIntensity = this.env.overcast ? 0.9 : 0.8;
     rs.vmScene.environment = this.envRT.texture;
-    rs.vmScene.environmentIntensity = this.env.overcast ? 0.9 : 0.7;
+    rs.vmScene.environmentIntensity = this.env.overcast ? 1.1 : 1.0;
     // Renderer env settings.
     const e = rs.env;
     e.sunDir.copy(this.sunDir);

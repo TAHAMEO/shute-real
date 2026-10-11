@@ -11,8 +11,8 @@ const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
 const seg = (u, a, b) => clamp01((u - a) / (b - a));
 
 const HIP = {
-  AR: [0.115, -0.158, -0.27], SMG: [0.105, -0.15, -0.255], LMG: [0.13, -0.19, -0.27], DMR: [0.12, -0.165, -0.27],
-  SNIPER: [0.125, -0.17, -0.27], SHOTGUN: [0.115, -0.16, -0.27], PISTOL: [0.09, -0.12, -0.31],
+  AR: [0.1, -0.128, -0.31], SMG: [0.095, -0.122, -0.3], LMG: [0.115, -0.15, -0.31], DMR: [0.105, -0.132, -0.31],
+  SNIPER: [0.11, -0.138, -0.31], SHOTGUN: [0.1, -0.13, -0.31], PISTOL: [0.085, -0.11, -0.34],
 };
 
 // ------------------------------------------------------------------ scope lens shader
@@ -244,8 +244,8 @@ export class Viewmodel {
     if (!def) return;
     const heavy = def.recoil.kick;
     const ads = this.game.weapons.adsAmount;
-    this.kickZv += (0.9 + heavy * 0.5) * (1 - ads * 0.45);
-    this.kickRotv += (2.2 + heavy * 2.5) * DEG * 60 * (1 - ads * 0.6);
+    this.kickZv += (0.45 + heavy * 0.35) * (1 - ads * 0.5);
+    this.kickRotv += (1.2 + heavy * 1.1) * DEG * 16 * (1 - ads * 0.6);
     this.kickRoll = (Math.random() - 0.5) * 1.5 * DEG * heavy;
     // Muzzle flash.
     const a = this.weapon.model.anchors;
@@ -362,20 +362,27 @@ export class Viewmodel {
     const def = w.slot.def;
     this.t += dt;
     const ads = smooth(clamp01(wc.adsAmount));
-    // ---- springs
-    this.kickZv += (-this.kickZ * 220 - this.kickZv * 22) * dt;
-    this.kickZ += this.kickZv * dt;
-    this.kickRotv += (-this.kickRot * 260 - this.kickRotv * 20) * dt;
-    this.kickRot += this.kickRotv * dt;
+    // ---- springs (fixed sub-steps keep them stable at low frame rates)
+    let rem = Math.min(dt, 0.1);
+    while (rem > 0) {
+      const h = Math.min(rem, 1 / 120);
+      rem -= h;
+      this.kickZv += (-this.kickZ * 220 - this.kickZv * 22) * h;
+      this.kickZ += this.kickZv * h;
+      this.kickRotv += (-this.kickRot * 260 - this.kickRotv * 20) * h;
+      this.kickRot += this.kickRotv * h;
+    }
     this.kickRoll *= Math.max(0, 1 - dt * 10);
-    // Sway from mouse movement.
-    const sens = 0.00045 * (1 - ads * 0.75);
-    this.swayVx += (-look.dx * sens - this.swayX * 120 - this.swayVx * 16) * dt * 60 * dt;
-    this.swayVy += (-look.dy * sens - this.swayY * 120 - this.swayVy * 16) * dt * 60 * dt;
-    this.swayX = Math.max(-0.06, Math.min(0.06, this.swayX + this.swayVx));
-    this.swayY = Math.max(-0.06, Math.min(0.06, this.swayY + this.swayVy));
-    this.swayX *= Math.max(0, 1 - dt * 6);
-    this.swayY *= Math.max(0, 1 - dt * 6);
+    // Sway: the weapon lags behind mouse movement, then settles.
+    const sens = 0.0009 * (1 - ads * 0.75);
+    const tx = Math.max(-0.05, Math.min(0.05, -look.dx * sens));
+    const ty = Math.max(-0.05, Math.min(0.05, -look.dy * sens));
+    const ks = Math.min(1, dt * 14);
+    this.swayVx += (tx - this.swayVx) * ks;
+    this.swayVy += (ty - this.swayVy) * ks;
+    const kr = Math.min(1, dt * 9);
+    this.swayX += (this.swayVx - this.swayX) * kr;
+    this.swayY += (this.swayVy - this.swayY) * kr;
     // Sprint and raise.
     const sprintT = p.sprinting && !wc.busy ? 1 : 0;
     this.sprintAmt += (sprintT - this.sprintAmt) * Math.min(1, dt * 8);
@@ -517,7 +524,7 @@ export class Viewmodel {
     }
 
     // ---- compose
-    this.root.position.set(px + ox + bobX + this.swayX * 0.6, py + oy + bobY + breathe + this.swayY * 0.6, pz + oz + this.kickZ * 0.06);
+    this.root.position.set(px + ox + bobX + this.swayX * 0.6, py + oy + bobY + breathe + this.swayY * 0.6, pz + oz + this.kickZ);
     this._e.set(rx + this.kickRot + this.swayY * 1.2, ry + this.swayX * 1.4, rz + this.kickRoll + this.swayX * 0.6, 'YXZ');
     this.root.quaternion.setFromEuler(this._e);
     this.root.updateMatrixWorld(true);
@@ -534,7 +541,7 @@ export class Viewmodel {
         // left hand rides the pump
         left = a.bolt || left;
       }
-      this.arms.update(right, hideLeft ? null : left, { leftOverride });
+      this.arms.update(right, hideLeft ? null : left, { leftOverride, dt });
     }
 
     // ---- muzzle flash decay

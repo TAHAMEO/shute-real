@@ -656,16 +656,19 @@ export function ironSight(b, sightY, rearF, relief = 0.08, x = 0) {
  * vertical, length L. front(s) / back(s) return half-depths at distance s down the axis.
  * Returns { pts, point(s) -> [f, y] on the axis }.
  */
-export function gripOutline(f, y, deg, L, front, back, n = 10, bottomR = 0.007) {
+export function gripOutline(f, y, deg, L, front, back, n = 10, bottomR = 0.007, o = {}) {
   const a = (deg * Math.PI) / 180;
   const dx = -Math.sin(a); const dy = -Math.cos(a);
   const px = Math.cos(a); const py = -Math.sin(a);
   const F = []; const B = [];
+  const ext = o.topY !== undefined ? (o.ext ?? 0.02) : 0;
   for (let i = 0; i <= n; i++) {
-    const s = (L * i) / n;
-    F.push([f + dx * s + px * front(s), y + dy * s + py * front(s)]);
-    B.push([f + dx * s - px * back(s), y + dy * s - py * back(s)]);
+    const s = -ext + ((L + ext) * i) / n;
+    const sc = Math.max(0, s);
+    F.push([f + dx * s + px * front(sc), y + dy * s + py * front(sc)]);
+    B.push([f + dx * s - px * back(sc), y + dy * s - py * back(sc)]);
   }
+  if (o.topY !== undefined) for (const p of [...F, ...B]) if (p[1] > o.topY) p[1] = o.topY;
   F[n][2] = bottomR;
   B[n][2] = bottomR;
   return { pts: [...F, ...B.reverse()], point: (s) => [f + dx * s, y + dy * s], dir: [dx, dy], perp: [px, py] };

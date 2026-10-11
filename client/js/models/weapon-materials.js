@@ -167,8 +167,8 @@ function buildTextures() {
   const pores = fbm(WW, WH, 4, 96, 2, 53, 0.6);
   const wood = new Uint8Array(WW * WH * 4);
   const woodH = new Float32Array(WW * WH);
-  const light = [132, 74, 40];
-  const dark = [58, 28, 14];
+  const light = [112, 64, 36];
+  const dark = [50, 25, 13];
   for (let y = 0; y < WH; y++) {
     for (let x = 0; x < WW; x++) {
       const i = y * WW + x;
@@ -350,7 +350,7 @@ const DEFS = {
   green: { color: '#3a4632', metalness: 0.0, roughness: 0.6, normal: 'polyN', ns: 0.1 },
   plum: { color: '#4a2219', metalness: 0.0, roughness: 0.45, normal: 'polyN', ns: 0.06 },
   wood: { color: '#ffffff', metalness: 0.0, roughness: 0.48, map: 'wood', normal: 'woodN', ns: 0.12 },
-  woodRed: { color: '#d99a80', metalness: 0.0, roughness: 0.42, map: 'wood', normal: 'woodN', ns: 0.1 },
+  woodRed: { color: '#b88672', metalness: 0.0, roughness: 0.42, map: 'wood', normal: 'woodN', ns: 0.1 },
   woodCheck: { color: '#f2d0b8', metalness: 0.0, roughness: 0.55, map: 'wood', normal: 'knurlN', ns: 0.45 },
   rubber: { color: '#171717', metalness: 0.0, roughness: 0.9, normal: 'polyN', ns: 0.15 },
   brass: { color: '#c39a4c', metalness: 1.0, roughness: 0.3, rough: true },

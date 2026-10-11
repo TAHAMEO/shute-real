@@ -400,7 +400,7 @@ export function getFabricNormal(repeat = 1) {
     const fine = periodicNoise(W, W, 128, rand);
     const folds = [];
     for (let k = 0; k < 7; k++) {
-      folds.push({ f: [4, 6, 7, 9, 11, 13, 17][k], g: 1 + (k % 3), ph: rand() * 6.28, ph2: rand() * 6.28, amp: 7 / (1 + k * 0.35), warp: 0.08 + rand() * 0.12 });
+      folds.push({ f: [3, 5, 6, 8, 9, 11, 13][k], g: 1 + (k % 3), ph: rand() * 6.28, ph2: rand() * 6.28, amp: 9 / (1 + k * 0.5), warp: 0.08 + rand() * 0.12 });
     }
     const TAU = Math.PI * 2;
     for (let y = 0; y < W; y++) {
@@ -413,7 +413,7 @@ export function getFabricNormal(repeat = 1) {
         for (let k = 0; k < folds.length; k++) {
           const F = folds[k];
           const s = Math.sin(TAU * (F.f * v + F.warp * Math.sin(TAU * (F.g * u) + F.ph2)) + F.ph);
-          fold += F.amp * (1 - Math.abs(s)) * (k % 2 ? mask1[i] : mask2[i]);
+          fold += F.amp * 0.5 * (1 + s) * (k % 2 ? mask1[i] : mask2[i]);
         }
         // ripstop grid every 16 px (8 mm), raised 2 px threads
         const rip = ((x & 15) < 2 || (y & 15) < 2) ? 0.55 : 0;
@@ -478,7 +478,7 @@ export function getNylonTextures() {
 // ------------------------------------------------------------------ faces
 
 /** Skin tone palette (sRGB hex), light → dark. */
-export const SKIN_TONES = ['#e3bea0', '#d19c7a', '#b67f5c', '#966443', '#74482e', '#52321f'];
+export const SKIN_TONES = ['#d8a888', '#c38a66', '#a8714f', '#8a5a3c', '#6a4129', '#4a2d1c'];
 const HAIR = ['#5a4330', '#2e2219', '#231a13', '#1e1712', '#17120e', '#120e0b'];
 
 /** Face texture layout: u wraps around the head (0.5 = face centre), v from chin (0) to crown (1). */
@@ -639,6 +639,9 @@ export function getFaceTexture(tone = 0, style = 'stubble', knit = '#26272a') {
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.roundRect(rx, ry, rw, rh, 9); ctx.stroke();
     }
+    // neck strip (bottom rows, used by the neck tube): plain skin / knit without features
+    ctx.fillStyle = style === 'balaclava' ? rgb(hexToRgb(knit)) : rgb(skin, 0.96);
+    ctx.fillRect(0, H - 9, W, 9);
     return canvasTexture(cv, { repeat: false });
   });
 }

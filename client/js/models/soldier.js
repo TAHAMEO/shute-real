@@ -21,6 +21,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const damp = (dt, tau) => 1 - Math.exp(-dt / Math.max(1e-4, tau));
 const frac = (x) => x - Math.floor(x);
+const kd = (snap, dt, tau) => (snap ? 1 : damp(dt, tau));
 
 // ================================================================== body dimensions (1.80 m man)
 
@@ -98,6 +99,13 @@ function makeRig(defs) {
 
 const TP_RIG = makeRig(buildBoneDefs(CORE_BONES, SIDE_BONES));
 const BI = TP_RIG.index;
+/** Per-side bone indices: [left, right]. */
+const SIDE_I = [0, 1].map((k) => {
+  const s = k ? 'R' : 'L';
+  const o = {};
+  for (const [n] of SIDE_BONES) o[n] = BI[n + s];
+  return o;
+});
 
 // ================================================================== geometry toolkit
 
@@ -506,7 +514,7 @@ function camoMaterial(pattern, fp = false) {
     name: `soldier-camo-${pattern}`,
     map: getCamoTexture(pattern),
     normalMap: getFabricNormal(fp ? 2 : 1),
-    normalScale: new THREE.Vector2(fp ? 0.75 : 0.9, fp ? 0.75 : 0.9),
+    normalScale: new THREE.Vector2(fp ? 0.5 : 0.85, fp ? 0.5 : 0.85),
     color: 0xc4c4c4,
     roughness: 0.9,
     metalness: 0,
@@ -757,12 +765,12 @@ function buildTorso(B, L, hi) {
     addGeo(B.gear, hi ? chamferBox(0.30, 0.42, 0.15, 0.03) : new THREE.BoxGeometry(0.3, 0.42, 0.15), C('chest', _mtx(0, cy(1.3), 0.232)), packC, w1('chest'));
     if (hi) {
       addGeo(B.gear, chamferBox(0.24, 0.20, 0.06, 0.02), C('chest', _mtx(0, cy(1.2), 0.33)), mulCol(packC, 0.92), w1('chest'));
-      addGeo(B.gear, chamferBox(0.06, 0.18, 0.1, 0.015), C('chest', _mtx(-0.17, cy(1.24), 0.24)), mulCol(packC, 0.9), w1('chest'));
-      addGeo(B.gear, chamferBox(0.06, 0.18, 0.1, 0.015), C('chest', _mtx(0.17, cy(1.24), 0.24)), mulCol(packC, 0.9), w1('chest'));
+      addGeo(B.gear, new THREE.BoxGeometry(0.06, 0.18, 0.1), C('chest', _mtx(-0.17, cy(1.24), 0.24)), mulCol(packC, 0.9), w1('chest'));
+      addGeo(B.gear, new THREE.BoxGeometry(0.06, 0.18, 0.1), C('chest', _mtx(0.17, cy(1.24), 0.24)), mulCol(packC, 0.9), w1('chest'));
       for (const s of [-1, 1]) {
         const pts = [];
-        for (let i = 0; i <= 5; i++) {
-          const th = -Math.PI * 0.45 + (i / 5) * Math.PI * 0.95;
+        for (let i = 0; i <= 4; i++) {
+          const th = -Math.PI * 0.45 + (i / 4) * Math.PI * 0.95;
           pts.push(new THREE.Vector3(s * 0.12, 1.418 + 0.135 * Math.cos(th), -0.004 + (th < 0 ? 0.176 : 0.168) * Math.sin(th)));
         }
         addSweep(B.gear, pts, { w: 0.05, h: 0.012, n: 3, widthAxis: X_AXIS, weights: w1('chest'), col: mulCol(packC, 0.85), seg: 4, tile: NYLON_TILE_M });
@@ -1138,6 +1146,22 @@ const HAND_TP = {
 
 let _instance = 0;
 
+/** Bounding box of a weapon's meshes in the weapon root's space (attach time only). */
+function weaponBox(root) {
+  const box = new THREE.Box3();
+  const inv = new THREE.Matrix4();
+  root.updateWorldMatrix(true, true);
+  inv.copy(root.matrixWorld).invert();
+  const m = new THREE.Matrix4();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry || o.name === 'reticle' || o.name === 'lens') return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    m.multiplyMatrices(inv, o.matrixWorld);
+    box.union(o.geometry.boundingBox.clone().applyMatrix4(m));
+  });
+  return box.isEmpty() ? null : box;
+}
+
 // ================================================================== SoldierModel
 
 /**
@@ -1207,6 +1231,7 @@ export class SoldierModel {
     // animation state
     this._poses = [new Pose(), new Pose(), new Pose(), new Pose()];
     this._pose = new Pose();
+    this._gaitO = { restX: [0, 0], restZ: [0, 0] };
     this._wpos = new THREE.Vector3();
     this._wq = new THREE.Quaternion();
     this._st = {
@@ -1258,7 +1283,12 @@ export class SoldierModel {
     W.lh.sub(W.rh);
     if (!rel(A.sight, W.sight)) W.sight.set(0, 0.12, 0.05); else W.sight.sub(W.rh);
     if (!rel(A.magazine || A.mag, W.mag)) W.mag.set(0, -0.07, -0.07); else W.mag.sub(W.rh);
-    if (!rel(A.stock || A.butt || A.shoulder || A.buttstock, W.butt)) W.butt.set(0, 0.035, 0.27); else W.butt.sub(W.rh);
+    if (!rel(A.stock || A.butt || A.shoulder || A.buttstock, W.butt)) {
+      // no stock anchor: rear-most point of the gun geometry, at bore height
+      const box = weaponBox(root);
+      const boreY = rel(A.muzzle, _v1) ? _v1.y : W.rh.y + 0.05;
+      if (box) W.butt.set(0, boreY - 0.025 - W.rh.y, box.max.z - 0.012 - W.rh.z); else W.butt.set(0, 0.035, 0.27);
+    } else W.butt.sub(W.rh);
     W.pistol = !W.hasLeft || W.lh.length() < 0.13;
     if (W.pistol && !rel(A.stock || A.butt, _v1)) W.butt.set(0, 0.03, 0.12);
     root.position.copy(W.rh).negate();
@@ -1385,38 +1415,37 @@ export class SoldierModel {
   _inputs(dt, s) {
     const st = this._st;
     const snap = this._snap;
-    const K = (tau) => (snap ? 1 : damp(dt, tau));
     const yaw = s.yaw ?? this.root.rotation.y;
     const v = s.velocity || ZERO_V;
     const c = Math.cos(yaw); const sn = Math.sin(yaw);
     const lx = v.x * c - v.z * sn;
     const lz = v.x * sn + v.z * c;
-    const kv = K(0.11);
+    const kv = kd(snap, dt, 0.11);
     st.vx += (lx - st.vx) * kv;
     st.vz += (lz - st.vz) * kv;
-    st.vy += ((v.y || 0) - st.vy) * K(0.05);
+    st.vy += ((v.y || 0) - st.vy) * kd(snap, dt, 0.05);
     st.speed = Math.hypot(st.vx, st.vz);
     if (st.speed > 0.05) { st.dirX = st.vx / st.speed; st.dirZ = st.vz / st.speed; }
     const stance = s.stance | 0;
-    const ks = K(0.085);
+    const ks = kd(snap, dt, 0.085);
     st.wS += ((stance === 0 ? 1 : 0) - st.wS) * ks;
     st.wC += ((stance === 1 ? 1 : 0) - st.wC) * ks;
     st.wP += ((stance === 2 ? 1 : 0) - st.wP) * ks;
     const wsum = st.wS + st.wC + st.wP || 1;
     st.wS /= wsum; st.wC /= wsum; st.wP /= wsum;
     const armed = !!this.weapon;
-    st.sprint += ((s.sprinting && stance === 0 && st.speed > 1.5 ? 1 : 0) - st.sprint) * K(0.12);
-    st.ads += ((s.ads && !s.sprinting && armed ? 1 : 0) - st.ads) * K(0.07);
-    st.lean += (clamp(s.lean || 0, -1, 1) - st.lean) * K(0.1);
+    st.sprint += ((s.sprinting && stance === 0 && st.speed > 1.5 ? 1 : 0) - st.sprint) * kd(snap, dt, 0.12);
+    st.ads += ((s.ads && !s.sprinting && armed ? 1 : 0) - st.ads) * kd(snap, dt, 0.07);
+    st.lean += (clamp(s.lean || 0, -1, 1) - st.lean) * kd(snap, dt, 0.1);
     const grounded = s.grounded !== false;
-    st.air += ((grounded ? 0 : 1) - st.air) * K(grounded ? 0.06 : 0.09);
-    st.pitch += (clamp(s.pitch || 0, -1.4, 1.4) - st.pitch) * K(0.035);
+    st.air += ((grounded ? 0 : 1) - st.air) * kd(snap, dt, grounded ? 0.06 : 0.09);
+    st.pitch += (clamp(s.pitch || 0, -1.4, 1.4) - st.pitch) * kd(snap, dt, 0.035);
     // reload loop timer
     const rel = !!s.reloading && armed;
     if (rel && !st.wasReloading) st.reloadT = 0;
     st.wasReloading = rel;
     if (rel) st.reloadT += dt;
-    st.reload += ((rel ? 1 : 0) - st.reload) * K(0.1);
+    st.reload += ((rel ? 1 : 0) - st.reload) * kd(snap, dt, 0.1);
     // landing impulse
     if (!grounded) st.airTime += dt;
     if (grounded && !st.wasGrounded && st.airTime > 0.15) this._land.v -= Math.min(1.6, 0.5 + st.airTime * 1.5);
@@ -1436,7 +1465,7 @@ export class SoldierModel {
     const ang = Math.atan2(st.dirX, -st.dirZ);
     const g = smooth(0.25, 1.2, vv) * (1 - st.wP);
     const hy = Math.abs(ang) <= Math.PI / 2 ? -0.5 * ang : -0.5 * Math.sign(ang) * (Math.PI - Math.abs(ang));
-    st.hipYaw += (hy * g * (1 - st.sprint * 0.6) - st.hipYaw) * K(0.16);
+    st.hipYaw += (hy * g * (1 - st.sprint * 0.6) - st.hipYaw) * kd(snap, dt, 0.16);
     this._snap = false;
   }
 
@@ -1525,18 +1554,13 @@ export class SoldierModel {
     const spr = st.sprint * smooth(3.5, 5.5, v);
     const beta = lerp(0.62, 0.34, run) - 0.05 * spr;
     const D = beta * st.cycle;
-    const o = {
-      beta, D, g, run, fwdShare: lerp(0.42, 0.36, run) - 0.05 * spr,
-      restX: [lerp(-0.13, -0.105, g), lerp(0.135, 0.105, g)],
-      restZ: [lerp(-0.07, 0, g), lerp(0.09, 0, g)],
-      H: clamp(0.03 + 0.28 * st.cycle * 0.5 * (0.55 + 0.45 * run), 0, 0.3) * smooth(0.02, 0.25, v),
-      liftSkew: lerp(1, 0.75, run),
-      heelStrike: lerp(0.28, 0.1, run) * (1 - spr),
-      toeOff: lerp(0.5, 0.95, run),
-      flatAt: lerp(0.2, 0.1, run),
-      heelAt: lerp(0.58, 0.35, run),
-      toeOut: lerp(0.18, 0.06, g),
-    };
+    const o = this._gaitO;
+    o.beta = beta; o.D = D; o.g = g; o.run = run; o.fwdShare = lerp(0.42, 0.36, run) - 0.05 * spr;
+    o.restX[0] = lerp(-0.13, -0.105, g); o.restX[1] = lerp(0.135, 0.105, g);
+    o.restZ[0] = lerp(-0.06, 0, g); o.restZ[1] = lerp(0.07, 0, g);
+    o.H = clamp(0.03 + 0.28 * st.cycle * 0.5 * (0.55 + 0.45 * run), 0, 0.3) * smooth(0.02, 0.25, v);
+    o.liftSkew = lerp(1, 0.75, run); o.heelStrike = lerp(0.28, 0.1, run) * (1 - spr); o.toeOff = lerp(0.5, 0.95, run);
+    o.flatAt = lerp(0.2, 0.1, run); o.heelAt = lerp(0.58, 0.35, run); o.toeOut = lerp(0.18, 0.06, g);
     this._gaitFoot(P, 0, o);
     this._gaitFoot(P, 1, o);
     const ph = st.phase;
@@ -1545,7 +1569,7 @@ export class SoldierModel {
     const sway = -0.022 * (1 - run) * Math.cos(TAU * (ph - beta / 2)) * g;
     const t = st.time;
     const idleSway = (1 - g) * (0.012 * Math.sin(t * 0.83) + 0.006 * Math.sin(t * 1.9));
-    P.pelvis.set(sway + idleSway, 0.978 - 0.03 * run - 0.025 * spr + bob - 0.012 * st.ads, 0.02 * (1 - g) - 0.03 * run - 0.05 * spr);
+    P.pelvis.set(sway + idleSway, 0.99 - 0.012 * g - 0.03 * run - 0.025 * spr + bob - 0.012 * st.ads, 0.02 * (1 - g) - 0.03 * run - 0.05 * spr);
     const lean = -(0.06 + 0.07 * run * g + 0.14 * spr);
     P.pelvisRot.set(lean, st.hipYaw - 0.14 * (1 - g) + 0.07 * g * Math.sin(TAU * ph) * (1 - spr * 0.4), 0.04 * g * Math.cos(TAU * (ph - beta / 2)) * (1 - run));
     P.spine.set(0.02 - 0.04 * spr, -0.5 * st.hipYaw + 0.07 * (1 - g), 0);
@@ -1562,12 +1586,11 @@ export class SoldierModel {
     const g = smooth(0.1, 0.8, v);
     const beta = 0.6;
     const D = beta * st.cycle;
-    const o = {
-      beta, D, g, run: 0, fwdShare: 0.45,
-      restX: [-0.13, 0.13], restZ: [-0.02, 0.05],
-      H: clamp(0.05 + 0.25 * st.cycle * 0.5, 0, 0.16) * smooth(0.02, 0.25, v), liftSkew: 1,
-      heelStrike: 0.18, toeOff: 0.55, flatAt: 0.2, heelAt: 0.55, toeOut: 0.1,
-    };
+    const o = this._gaitO;
+    o.beta = beta; o.D = D; o.g = g; o.run = 0; o.fwdShare = 0.45;
+    o.restX[0] = -0.13; o.restX[1] = 0.13; o.restZ[0] = -0.02; o.restZ[1] = 0.05;
+    o.H = clamp(0.05 + 0.25 * st.cycle * 0.5, 0, 0.16) * smooth(0.02, 0.25, v); o.liftSkew = 1;
+    o.heelStrike = 0.18; o.toeOff = 0.55; o.flatAt = 0.2; o.heelAt = 0.55; o.toeOut = 0.1;
     // crouch walk
     this._gaitFoot(P, 0, o);
     this._gaitFoot(P, 1, o);
@@ -1697,8 +1720,7 @@ export class SoldierModel {
     this._fk(BI.head);
     // ---- legs
     for (let k = 0; k < 2; k++) {
-      const side = k ? 'R' : 'L';
-      const ti = BI['thigh' + side]; const si = BI['shin' + side]; const fi = BI['foot' + side];
+      const ti = SIDE_I[k].thigh; const si = SIDE_I[k].shin; const fi = SIDE_I[k].foot;
       this._fk(ti);
       _pole.copy(P.knee[k]);
       if (_pole.lengthSq() < 1e-6) _pole.set(0, 0, -1);
@@ -1713,8 +1735,7 @@ export class SoldierModel {
     // ---- clavicles
     const reloadW = st.reload;
     for (let k = 0; k < 2; k++) {
-      const side = k ? 'R' : 'L';
-      const ci = BI['clavicle' + side];
+      const ci = SIDE_I[k].clavicle;
       const m = k ? 1 : -1;
       const protract = armed ? (k ? 0.08 : 0.3) : 0;
       const shrug = breathe * 0.012 + (armed ? 0.04 : 0) + st.wP * 0.22 + (k ? ads * 0.05 : 0);
@@ -1765,8 +1786,8 @@ export class SoldierModel {
     // sprint: rifle across the chest (chest space), pumping with the stride
     if (spr > 1e-3) {
       const pump = Math.sin(TAU * st.phase) * 0.035;
-      _v1.set(W.pistol ? 0.12 : 0.1 + pump * 0.3, W.pistol ? -0.12 : -0.08 + Math.abs(pump) * 0.4, W.pistol ? -0.25 : -0.27).applyQuaternion(chestQ).add(chestP);
-      qEuler(_q1, W.pistol ? -0.9 : -0.55 + pump, W.pistol ? 0.3 : 0.75, W.pistol ? 0 : 0.55);
+      _v1.set(W.pistol ? 0.12 : 0.13 + pump * 0.3, W.pistol ? -0.12 : -0.1 + Math.abs(pump) * 0.4, W.pistol ? -0.25 : -0.26).applyQuaternion(chestQ).add(chestP);
+      qEuler(_q1, W.pistol ? -0.9 : -0.12 + pump, W.pistol ? 0.3 : 1.05, W.pistol ? 0 : 0.75);
       _q1.premultiply(chestQ);
       wp.lerp(_v1, spr);
       wq.slerp(_q1, spr);
@@ -1789,7 +1810,7 @@ export class SoldierModel {
     _q1.multiplyQuaternions(wq, W.rhQ).multiply(HAND_TP.rightQ);
     _v1.copy(HAND_TP.rightGrip).applyQuaternion(_q1);
     _v2.copy(wp).sub(_v1); // wrist target
-    this._solveArm(1, _v2, _q1, _v3.set(0.6, -0.7, 0.35).applyQuaternion(chestQ));
+    this._solveArm(1, _v2, _q1, _v3.set(0.42, -0.85, 0.3).applyQuaternion(chestQ));
     // left: handguard, with reload path
     _q2.multiplyQuaternions(wq, W.lhQ).multiply(W.pistol ? HAND_TP.pistolLeftQ : HAND_TP.leftQ);
     _v4.copy(W.lh).applyQuaternion(wq).add(wp); // palm point
@@ -1797,7 +1818,7 @@ export class SoldierModel {
       this._reloadHand(ru, rW, wp, wq, chestQ, chestP, _v4, _q2);
     }
     // keep the left hand on the handguard if the arm can't reach: slide back along the bore
-    const lsh = _v5.set(-0.16, -0.015, 0.035).applyQuaternion(this._rq[BI.clavicleL]).add(this._rp[BI.clavicleL]);
+    const lsh = _v5.set(-0.16, -0.015, 0.035).applyQuaternion(this._rq[SIDE_I[0].clavicle]).add(this._rp[SIDE_I[0].clavicle]);
     _v1.copy(HAND_TP.leftGrip).applyQuaternion(_q2);
     _v3.copy(_v4).sub(_v1);
     const over = _v3.distanceTo(lsh) - (UPPER_ARM + FORE_ARM) * 0.985;
@@ -1864,8 +1885,8 @@ export class SoldierModel {
 
   /** Two-bone IK for one arm: wrist target (root space) + desired hand rotation (root space). */
   _solveArm(k, wrist, handQ, pole) {
-    const side = k ? 'R' : 'L';
-    const ci = BI['clavicle' + side]; const ui = BI['upperArm' + side]; const fi = BI['foreArm' + side]; const hi = BI['hand' + side];
+    const I = SIDE_I[k];
+    const ci = I.clavicle; const ui = I.upperArm; const fi = I.foreArm; const hi = I.hand;
     const bones = this.bones;
     this._fk(ui);
     solveTwoBone(this._rp[ui], wrist, pole, UPPER_ARM, FORE_ARM, _mid, _end);
@@ -1878,12 +1899,12 @@ export class SoldierModel {
   }
 
   _fingers(k, curl, index, thumb) {
-    const side = k ? 'R' : 'L';
     const m = k ? 1 : -1;
     const b = this.bones;
-    qEuler(b[BI['fingers' + side]].quaternion, curl * 0.55, 0, 0);
-    qEuler(b[BI['index' + side]].quaternion, index * 0.75, 0, m * 0.04);
-    qEuler(b[BI['thumb' + side]].quaternion, thumb * 0.3, m * 0.2 * thumb, m * -0.35 * thumb);
+    const I = SIDE_I[k];
+    qEuler(b[I.fingers].quaternion, curl * 0.55, 0, 0);
+    qEuler(b[I.index].quaternion, index * 0.75, 0, m * 0.04);
+    qEuler(b[I.thumb].quaternion, thumb * 0.3, m * 0.2 * thumb, m * -0.35 * thumb);
   }
 
   // ---------------------------------------------------------------- death
@@ -1974,11 +1995,11 @@ export class SoldierModel {
       bones[i].quaternion.slerpQuaternions(d.q0[i], d.q1[i], f);
     }
     // knees buckle during the fall
-    for (const side of ['L', 'R']) {
+    for (let k = 0; k < 2; k++) {
       qEuler(_q1, 0.55 * buckle, 0, 0);
-      bones[BI['thigh' + side]].quaternion.multiply(_q1);
+      bones[SIDE_I[k].thigh].quaternion.multiply(_q1);
       qEuler(_q1, -1.1 * buckle, 0, 0);
-      bones[BI['shin' + side]].quaternion.multiply(_q1);
+      bones[SIDE_I[k].shin].quaternion.multiply(_q1);
     }
     // ground clamp (keep head, hands, knees, feet, chest above the ground)
     this.root.updateMatrixWorld(true);
@@ -2080,11 +2101,15 @@ function fpBoneDefs() {
 
 const FP_RIG = makeRig(fpBoneDefs());
 const FI = FP_RIG.index;
+const FINGER_NAMES = ['index', 'middle', 'ring', 'pinky'];
+const SPREAD_DIR = [1, 0.2, -0.6, -1.2];
+const FP_FI = ['L', 'R'].map((s) => [...FINGER_NAMES, 'thumb'].map((n) => [FI[n + '1' + s], FI[n + '2' + s], FI[n + '3' + s]]));
+const FP_ARM = ['L', 'R'].map((s) => ['upperArm', 'foreArm', 'twist', 'hand'].map((n) => FI[n + s]));
 
 /** FP glove / sleeve palettes per team. */
 const FP_LOOK = {
-  0: { camo: 'multicam', glove: '#3a3833', palm: '#1f1f1d', knuckle: '#151515', cuff: '#4c5241', strap: '#2b2c28' },
-  1: { camo: 'flora', glove: '#8a7656', palm: '#2c2a26', knuckle: '#1c1b19', cuff: '#a08b66', strap: '#4a4234' },
+  0: { camo: 'multicam', glove: '#7d6c52', palm: '#4a4136', knuckle: '#1b1a18', cuff: '#4c5241', strap: '#3a3a33' },
+  1: { camo: 'flora', glove: '#8a7656', palm: '#4d4337', knuckle: '#1c1b19', cuff: '#a08b66', strap: '#4a4234' },
   ffa: { camo: 'woodland', glove: '#2e2e2b', palm: '#1d1d1b', knuckle: '#141414', cuff: '#4a4d3c', strap: '#2b2c28' },
 };
 
@@ -2162,7 +2187,7 @@ function fpGeometry(teamKey) {
       // knuckle pad on the proximal phalanx
       addGeo(B.hard, chamferBox(0.016, 0.02, 0.006, 0.0025), fr(n + '1' + side, mirror, _mtx(0, -l[0] * 0.45, r * 0.95, 0, 0, 0)), knC, [FI[n + '1' + side], 1]);
     }
-    for (let i = 0; i < 3; i++) phal('thumb' + (i + 1), FP_THUMB[1][i], FP_THUMB[2] * (1.12 - i * 0.1), i === 2, twoTone('thumb' + (i + 1) + side, mirror));
+    for (let i = 0; i < 3; i++) phal('thumb' + (i + 1), FP_THUMB[1][i], FP_THUMB[2] * (1.12 - i * 0.1), i === 2, () => glove);
     // watch on the left wrist (twist bone, dorsal side)
     if (side === 'L') {
       const tw = (m) => fr('twist' + side, mirror, m);
@@ -2181,7 +2206,7 @@ function fpGeometry(teamKey) {
 
 /** Finger poses: [curl1, curl2, curl3] per finger + thumb [cmcX, cmcY, cmcZ, mcp, ip]. */
 const FP_POSES = {
-  pistol: { index: [0.42, 0.5, 0.22], middle: [1.32, 1.3, 0.62], ring: [1.42, 1.25, 0.6], pinky: [1.5, 1.15, 0.55], thumb: [0.55, 0.15, -0.75, 0.35, 0.3], spread: 0.04 },
+  pistol: { index: [0.42, 0.5, 0.22], middle: [1.32, 1.3, 0.62], ring: [1.42, 1.25, 0.6], pinky: [1.5, 1.15, 0.55], thumb: [0.8, 0.0, -0.55, 0.5, 0.4], spread: 0.04 },
   guard: { index: [0.95, 0.8, 0.35], middle: [1.05, 0.9, 0.42], ring: [1.1, 0.92, 0.45], pinky: [1.15, 0.9, 0.45], thumb: [0.15, 0.25, -0.35, 0.15, 0.12], spread: 0.06 },
   mag: { index: [1.05, 0.95, 0.45], middle: [1.15, 1.0, 0.5], ring: [1.2, 1.0, 0.5], pinky: [1.25, 1.0, 0.5], thumb: [0.4, 0.3, -0.6, 0.3, 0.25], spread: 0.03 },
   relaxed: { index: [0.22, 0.3, 0.18], middle: [0.3, 0.38, 0.2], ring: [0.36, 0.42, 0.22], pinky: [0.42, 0.45, 0.25], thumb: [0.15, 0.1, -0.2, 0.1, 0.1], spread: 0.1 },
@@ -2197,8 +2222,8 @@ const HAND_FP = {
   magGrip: new THREE.Vector3(-0.004, -0.075, -0.03),
 };
 
-const FP_SHOULDER = [new THREE.Vector3(-0.2, -0.29, -0.02), new THREE.Vector3(0.2, -0.3, 0.1)];
-const FP_POLE = [new THREE.Vector3(-0.55, -0.8, 0.05), new THREE.Vector3(0.5, -0.82, 0.18)];
+const FP_SHOULDER = [new THREE.Vector3(-0.17, -0.31, -0.1), new THREE.Vector3(0.22, -0.31, 0.2)];
+const FP_POLE = [new THREE.Vector3(-0.5, -0.85, 0.1), new THREE.Vector3(0.35, -0.95, 0.0)];
 const _fpInv = new THREE.Matrix4();
 const _fpM = new THREE.Matrix4();
 const _fpP = new THREE.Vector3();
@@ -2252,8 +2277,7 @@ export function createFirstPersonArms({ team = 0 } = {}) {
   const lowered = new THREE.Vector3(-0.26, -0.7, -0.05);
 
   const solve = (k, target, handQ, grip, poseName, opts) => {
-    const side = k ? 'R' : 'L';
-    const ui = FI['upperArm' + side]; const fi = FI['foreArm' + side]; const ti = FI['twist' + side]; const hi = FI['hand' + side];
+    const ui = FP_ARM[k][0]; const fi = FP_ARM[k][1]; const ti = FP_ARM[k][2]; const hi = FP_ARM[k][3];
     if (target) {
       _fpM.multiplyMatrices(_fpInv, target.matrixWorld);
       _fpM.decompose(_fpP, _fpQ, _fpS);
@@ -2283,23 +2307,25 @@ export function createFirstPersonArms({ team = 0 } = {}) {
     const cp = curPose[k];
     const a = opts.snap ? 1 : clamp((opts.dt ?? 1 / 60) * 14, 0, 1);
     const m = k ? 1 : -1;
-    for (const n of ['index', 'middle', 'ring', 'pinky']) {
+    for (let f = 0; f < 4; f++) {
+      const n = FINGER_NAMES[f];
       for (let i = 0; i < 3; i++) cp[n][i] += (target2[n][i] - cp[n][i]) * a;
     }
     for (let i = 0; i < 5; i++) cp.thumb[i] += (target2.thumb[i] - cp.thumb[i]) * a;
     cp.spread += (target2.spread - cp.spread) * a;
     const trig = k && poseName === 'pistol' ? clamp(opts.trigger || 0, 0, 1) : 0;
-    const spreadDir = { index: 1, middle: 0.2, ring: -0.6, pinky: -1.2 };
-    for (const n of ['index', 'middle', 'ring', 'pinky']) {
-      const extra = n === 'index' ? [0.25 * trig, 0.35 * trig, 0.1 * trig] : [0, 0, 0];
-      qEuler(bones[FI[n + '1' + side]].quaternion, cp[n][0] + extra[0], 0, m * -cp.spread * spreadDir[n]);
-      qEuler(bones[FI[n + '2' + side]].quaternion, cp[n][1] + extra[1], 0, 0);
-      qEuler(bones[FI[n + '3' + side]].quaternion, cp[n][2] + extra[2], 0, 0);
+    const FIk = FP_FI[k];
+    for (let f = 0; f < 4; f++) {
+      const n = FINGER_NAMES[f];
+      const t0 = f === 0 ? trig : 0;
+      qEuler(bones[FIk[f][0]].quaternion, cp[n][0] + 0.25 * t0, 0, m * -cp.spread * SPREAD_DIR[f]);
+      qEuler(bones[FIk[f][1]].quaternion, cp[n][1] + 0.35 * t0, 0, 0);
+      qEuler(bones[FIk[f][2]].quaternion, cp[n][2] + 0.1 * t0, 0, 0);
     }
     const th = cp.thumb;
-    qEuler(bones[FI['thumb1' + side]].quaternion, th[0], m * th[1], m * th[2]);
-    qEuler(bones[FI['thumb2' + side]].quaternion, th[3], 0, 0);
-    qEuler(bones[FI['thumb3' + side]].quaternion, th[4], 0, 0);
+    qEuler(bones[FIk[4][0]].quaternion, th[0], m * th[1], m * th[2]);
+    qEuler(bones[FIk[4][1]].quaternion, th[3], 0, 0);
+    qEuler(bones[FIk[4][2]].quaternion, th[4], 0, 0);
   };
 
   return {

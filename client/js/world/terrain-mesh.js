@@ -154,7 +154,7 @@ function makeTerrainMaterial(world, baker, groundTex, env) {
           vec2 uvG = w * uTiles.x, uvD = w * uTiles.y, uvF = w * uTiles.w, uvV = w * uGravelTile;
           vec4 grass = tri(tGrass, uvG);
           vec3 grassN = nrm(tGrassN, uvG);
-          grass.rgb *= mix(uGrassTint, uGrassTint2, smoothstep(0.35, 0.7, macro)) * 1.9;
+          grass.rgb *= mix(uGrassTint, uGrassTint2, smoothstep(0.35, 0.7, macro)) * 2.4;
           vec4 base = grass;
           vec3 baseN = grassN;
           if (uAlpine > 0.5) {
@@ -164,11 +164,11 @@ function makeTerrainMaterial(world, baker, groundTex, env) {
             baseN = normalize(mix(baseN, nrm(tGravelN, uvV), g));
           }
           vec4 forest = tri(tForest, uvF);
-          forest.rgb *= uForestTint * 2.2;
+          forest.rgb *= uForestTint * 2.6;
           base = mix(base, forest, wForest);
           baseN = normalize(mix(baseN, nrm(tForestN, uvF), wForest));
           vec4 dirt = tri(tDirt, uvD);
-          dirt.rgb *= uDirtTint * 1.7;
+          dirt.rgb *= uDirtTint * 2.0;
           float wDirt = max(max(wRoad, wClear), bare * (1.0 - wForest));
           base = mix(base, dirt, wDirt);
           baseN = normalize(mix(baseN, nrm(tDirtN, uvD), wDirt));
