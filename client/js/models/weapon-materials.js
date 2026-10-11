@@ -272,13 +272,13 @@ export function getReticleTexture(kind) {
       const rr = Math.hypot(u, v);
       let a = 0;
       if (kind === 'holo') {
-        // ring: radius 0.62, line half-width 0.022 (≈2.3 MOA); dot radius 0.04
-        const ring = Math.max(0, 1 - Math.abs(rr - 0.62) / 0.024);
-        const dot = Math.max(0, 1 - rr / 0.045);
+        // ring: radius 0.62, line half-width 0.024 (~2.5 MOA); centre dot radius 0.07 (~3.7 MOA, game-visible)
+        const ring = Math.min(1, Math.max(0, 1.6 - Math.abs(rr - 0.62) / 0.03));
+        const dot = Math.min(1, Math.max(0, 1.6 - rr / 0.06));
         let tick = 0;
         const ax = Math.abs(u);
         const ay = Math.abs(v);
-        if ((ax < 0.02 && ay > 0.5 && ay < 0.64) || (ay < 0.02 && ax > 0.5 && ax < 0.64)) tick = 1;
+        if ((ax < 0.03 && ay > 0.5 && ay < 0.64) || (ay < 0.03 && ax > 0.5 && ax < 0.64)) tick = 1;
         a = Math.min(1, Math.pow(ring, 0.6) + Math.pow(dot, 0.5) + tick * 0.9);
         a = Math.max(a, Math.exp(-((rr - 0.62) ** 2) / 0.0012) * 0.18, Math.exp(-(rr * rr) / 0.004) * 0.25);
       } else {
@@ -377,11 +377,11 @@ function makeReticleMaterial(kind) {
   const m = new THREE.MeshBasicMaterial({
     name: `weapon:reticle_${kind}`,
     map: getReticleTexture(kind),
-    color: new THREE.Color(6.0, 0.16, 0.1),
+    color: new THREE.Color(5.0, 0.12, 0.08),
     transparent: true,
     depthWrite: false,
     toneMapped: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     side: THREE.FrontSide,
   });
   return m;

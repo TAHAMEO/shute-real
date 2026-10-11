@@ -32,19 +32,20 @@ export function updateHitboxes(h, x, y, z, yaw, stance, lean = 0) {
   }
   const crouch = stance === STANCE.CROUCH;
   const lx = rx * lean * 0.32, lz = rz * lean * 0.32; // upper-body lean offset
+  // Capsule end points are inset by the radius so the rounded caps don't overlap the head.
   const headY = crouch ? 1.12 : 1.62;
-  const chestTop = crouch ? 0.98 : 1.45;
-  const chestBot = crouch ? 0.6 : 1.02;
+  const chestTop = crouch ? 0.8 : 1.27;
+  const chestBot = crouch ? 0.62 : 1.06;
   const fwdLean = crouch ? 0.12 : 0.03;
   set(c[0], x + lx + fx * (fwdLean + 0.04), y + headY, z + lz + fz * (fwdLean + 0.04), x + lx + fx * (fwdLean + 0.04), y + headY, z + lz + fz * (fwdLean + 0.04), 0.13, HEAD);
-  set(c[1], x + lx * 0.7 + fx * fwdLean, y + chestTop, z + lz * 0.7 + fz * fwdLean, x + lx * 0.2, y + chestBot, z + lz * 0.2, 0.22, TORSO);
+  set(c[1], x + lx * 0.7 + fx * fwdLean, y + chestTop, z + lz * 0.7 + fz * fwdLean, x + lx * 0.2, y + chestBot, z + lz * 0.2, 0.21, TORSO);
   if (crouch) {
-    set(c[2], x, y + 0.55, z, x + fx * 0.25, y + 0.12, z + fz * 0.25, 0.18, LIMB);
+    set(c[2], x, y + 0.42, z, x + fx * 0.25, y + 0.14, z + fz * 0.25, 0.17, LIMB);
   } else {
-    set(c[2], x, y + 0.95, z, x, y + 0.12, z, 0.17, LIMB);
+    set(c[2], x, y + 0.8, z, x, y + 0.14, z, 0.17, LIMB);
   }
   // Arms + weapon region (extends forward from the chest).
-  const ay = y + (crouch ? 0.85 : 1.3);
+  const ay = y + (crouch ? 0.82 : 1.24);
   set(c[3], x + lx + rx * 0.12, ay, z + lz + rz * 0.12, x + lx + fx * 0.45 + rx * 0.05, ay + 0.02, z + lz + fz * 0.45 + rz * 0.05, 0.1, LIMB);
   h.cx = x; h.cy = y + (crouch ? 0.65 : 0.9); h.cz = z; h.radius = crouch ? 0.9 : 1.15;
   return h;

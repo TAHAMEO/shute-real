@@ -254,18 +254,25 @@ export class Game {
       this._lobbySend({ t: 'list' });
       return this.lobby;
     }
-    this.lobby?.close();
+    // Never run two connection attempts at once (they would race for this.lobby).
+    if (this._lobbyConnecting) return this._lobbyConnecting;
+    this._lobbyConnecting = this._connectLobby(url, quiet).finally(() => { this._lobbyConnecting = null; });
+    return this._lobbyConnecting;
+  }
+
+  async _connectLobby(url, quiet) {
+    if (this.lobby && this.lobby !== this.transport) this.lobby.close();
     this.lobby = null;
     const t = new NetTransport(url);
     try {
-      await t.connect(4000);
+      await t.connect(9000);
     } catch (e) {
       this.menu.setServerInfo({ connected: false, address: url.replace(/^wss?:\/\//, '').replace(/\/ws$/, ''), lanUrls: [], playersOnline: 0, error: quiet ? 'Offline — start the server with ./start.sh to play multiplayer' : e.message });
       if (!quiet) this.menu.showToast(e.message, 'error');
       return null;
     }
     this.lobby = t;
-    t.onMessage((m) => this._onLobbyMessage(m));
+    t.onMessage((m) => this._onLobbyMessage(m, t));
     t.onClose(() => {
       if (this.lobby === t) this.lobby = null;
       this.menu.setServerInfo({ connected: false, address: url, lanUrls: [], playersOnline: 0, error: 'Disconnected from server' });
@@ -280,10 +287,11 @@ export class Game {
     else this.connectLobby(defaultServerUrl(), true);
   }
 
-  _onLobbyMessage(m) {
+  _onLobbyMessage(m, socket) {
+    if (socket !== this.lobby && socket !== this.transport) return; // stale connection
     switch (m.t) {
       case 'hello':
-        this.menu.setServerInfo({ connected: true, address: this.lobby.url.replace(/^wss?:\/\//, '').replace(/\/ws$/, ''), lanUrls: m.lanUrls || [], playersOnline: m.playersOnline || 0, error: null });
+        this.menu.setServerInfo({ connected: true, address: socket.url.replace(/^wss?:\/\//, '').replace(/\/ws$/, ''), lanUrls: m.lanUrls || [], playersOnline: m.playersOnline || 0, error: null });
         this.menu.setRooms(m.rooms || []);
         break;
       case 'rooms':
@@ -297,7 +305,7 @@ export class Game {
         if (this.state === 'loading') { this.state = 'menu'; this.menu.setLoading(false); this.menu.show('multiplayer'); }
         break;
       default:
-        if (this.transport === this.lobby) this._onMessage(m);
+        if (this.transport === socket) this._onMessage(m);
     }
   }
 

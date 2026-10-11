@@ -86,7 +86,7 @@ export function rrect(u0, v0, u1, v1, r = 0) {
 // ------------------------------------------------------------------ geometry post-processing
 
 /** Recompute normals of a non-indexed geometry, smoothing across edges below `angle` (radians). */
-export function creaseNormals(geo, angle) {
+export function creaseNormals(geo, angle, flatAxis = -1) {
   const pos = geo.attributes.position.array;
   const n = pos.length / 3;
   const faces = n / 3;
@@ -103,15 +103,8 @@ export function creaseNormals(geo, angle) {
     const l = Math.hypot(nx, ny, nz) || 1;
     nx /= l; ny /= l; nz /= l;
     fn[f * 3] = nx; fn[f * 3 + 1] = ny; fn[f * 3 + 2] = nz;
-    // interior angles at each corner (angle-weighted normals)
-    const P = [[ax, ay, az], [bx, by, bz], [cx, cy, cz]];
-    for (let k = 0; k < 3; k++) {
-      const p0 = P[k]; const p1 = P[(k + 1) % 3]; const p2 = P[(k + 2) % 3];
-      const e1x = p1[0] - p0[0]; const e1y = p1[1] - p0[1]; const e1z = p1[2] - p0[2];
-      const e2x = p2[0] - p0[0]; const e2y = p2[1] - p0[1]; const e2z = p2[2] - p0[2];
-      const d = (e1x * e2x + e1y * e2y + e1z * e2z) / ((Math.hypot(e1x, e1y, e1z) * Math.hypot(e2x, e2y, e2z)) || 1);
-      corner[f * 3 + k] = Math.acos(Math.max(-1, Math.min(1, d)));
-    }
+    // area-weighted normals: large flat faces dominate, so small bevel facets do not bend them
+    corner[f * 3] = corner[f * 3 + 1] = corner[f * 3 + 2] = l;
   }
   const buckets = new Map();
   const ids = new Array(n);
@@ -123,13 +116,18 @@ export function creaseNormals(geo, angle) {
     ids[i] = b;
   }
   const cosA = Math.cos(angle);
+  // cap faces of an extrusion (normal along flatAxis) stay perfectly flat and do not bend their neighbours
+  const flat = new Uint8Array(faces);
+  if (flatAxis >= 0) for (let f = 0; f < faces; f++) flat[f] = Math.abs(fn[f * 3 + flatAxis]) > 0.9995 ? 1 : 0;
   const out = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
     const f = (i / 3) | 0;
     const fx = fn[f * 3]; const fy = fn[f * 3 + 1]; const fz = fn[f * 3 + 2];
+    if (flat[f]) { out[i * 3] = fx; out[i * 3 + 1] = fy; out[i * 3 + 2] = fz; continue; }
     let sx = 0; let sy = 0; let sz = 0;
     for (const j of ids[i]) {
       const g = (j / 3) | 0;
+      if (flat[g]) continue;
       const gx = fn[g * 3]; const gy = fn[g * 3 + 1]; const gz = fn[g * 3 + 2];
       if (fx * gx + fy * gy + fz * gz >= cosA) {
         const w = corner[j];
@@ -148,7 +146,7 @@ export function creaseNormals(geo, angle) {
 export function prep(geo, q, { axis = -1, wear = 1, crease = true, creaseAngle, keepUV = false } = {}) {
   let g = geo.index ? geo.toNonIndexed() : geo;
   for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(keepUV && k === 'uv')) g.deleteAttribute(k);
-  if (crease) creaseNormals(g, creaseAngle ?? q.crease);
+  if (crease) creaseNormals(g, creaseAngle ?? q.crease, axis);
   const n = g.attributes.position.count;
   const col = new Float32Array(n * 3).fill(1);
   if (axis >= 0 && wear > 0 && q.fp) {
@@ -267,6 +265,12 @@ export class Builder {
     }
   }
 
+  /** Radial segment count: explicit values are capped for the third-person LOD. */
+  _seg(want, def, small = false) {
+    const n = want || def;
+    return this.fp ? n : Math.min(n, small ? this.q.segS : this.q.seg);
+  }
+
   /** Animated sub-group with its own frame (gun space). Parts added to it use gun space too. */
   group(name, x = 0, y = 0, f = 0, rx = 0, ry = 0, rz = 0) {
     const c = new Builder(this.id, this.q, this.root, mtx(x, y, f, rx, ry, rz), name);
@@ -308,7 +312,7 @@ export class Builder {
   /** Cylinder along the bore from f0 to f1 at (o.x, o.y). r may be [r0, r1]. */
   tube(mat, r, f0, f1, o = {}) {
     const [r0, r1] = Array.isArray(r) ? r : [r, r];
-    const segs = o.seg || this.q.seg;
+    const segs = this._seg(o.seg, this.q.seg);
     const g = cylZ(r0, r1, f1 - f0, segs, this.q, o);
     let m = mtx(o.x || 0, o.y || 0, f0, o.rx || 0, o.ry || 0, o.roll || 0);
     if (o.pre) m = o.pre.clone().multiply(m);
@@ -317,7 +321,7 @@ export class Builder {
 
   /** Lathe [[r, f], ...] (absolute f) around an axis parallel to the bore at (o.x, o.y). */
   lathe(mat, pts, o = {}) {
-    const segs = o.seg || this.q.seg;
+    const segs = this._seg(o.seg, this.q.seg);
     const g = latheZ(pts, segs, this.q, o);
     let m = mtx(o.x || 0, o.y || 0, 0, o.rx || 0, o.ry || 0, o.roll || 0);
     if (o.pre) m = o.pre.clone().multiply(m);
@@ -344,7 +348,7 @@ export class Builder {
 
   /** Cylinder with its axis along X (pins, screws, side turrets), centred at (x, y, f). */
   cylX(mat, x, y, f, r, len, o = {}) {
-    const segs = o.seg || this.q.segS;
+    const segs = this._seg(o.seg, this.q.segS, true);
     const g = prep(new THREE.CylinderGeometry(o.r2 ?? r, r, len, segs), this.q, { creaseAngle: segs <= 8 ? 0.95 : this.q.crease });
     g.rotateZ(-Math.PI / 2);
     let m = mtx(x, y, f, o.rx || 0, o.ry || 0, o.rz || 0);
@@ -354,7 +358,7 @@ export class Builder {
 
   /** Cylinder with its axis along Y, centred at (x, y, f). o.r2 = top radius. */
   cylY(mat, x, y, f, r, len, o = {}) {
-    const segs = o.seg || this.q.segS;
+    const segs = this._seg(o.seg, this.q.segS, true);
     const g = prep(new THREE.CylinderGeometry(o.r2 ?? r, r, len, segs), this.q, { creaseAngle: segs <= 8 ? 0.95 : this.q.crease });
     let m = mtx(x, y, f, o.rx || 0, o.ry || 0, o.rz || 0);
     if (o.pre) m = o.pre.clone().multiply(m);
@@ -363,7 +367,7 @@ export class Builder {
 
   /** Lathe around the Y axis: pts = [[r, y], ...] (local y, bottom to top), placed at (x, y, f). */
   latheY(mat, pts, x, y, f, o = {}) {
-    const segs = o.seg || this.q.segS;
+    const segs = this._seg(o.seg, this.q.segS, true);
     const g = prep(new THREE.LatheGeometry(pts.map((p) => _v2(Math.max(p[0], 0), p[1])), segs), this.q,
       { creaseAngle: o.crease ?? (segs <= 8 ? 0.95 : this.q.crease) });
     let m = mtx(x, y, f, o.rx || 0, o.ry || 0, o.rz || 0);

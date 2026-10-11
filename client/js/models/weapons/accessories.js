@@ -46,7 +46,7 @@ export function rail(b, mat, f0, f1, y, o = {}) {
   }
   const base = [[-RS, 0], [RS, 0], [RS, 0.0035], [RW, 0.0065], [-RW, 0.0065], [-RS, 0.0035]];
   b.section(mat, base, f0, f1, { x, y, pre, tint: 0.55, bevel: 0.0004 });
-  const tooth = extrudeSection([[-RW, 0.0065], [RW, 0.0065], [RS, RAIL_H], [-RS, RAIL_H]], TOOTH, b.q, { bevel: 0.0003, bevelSeg: 1 });
+  const tooth = extrudeSection([[-RW, 0.0065], [RW, 0.0065], [RS, RAIL_H], [-RS, RAIL_H]], TOOTH, b.q, { bevel: 0 });
   const n = Math.max(1, Math.floor((len - TOOTH) / PITCH) + 1);
   const start = f0 + (len - ((n - 1) * PITCH + TOOTH)) / 2;
   for (let i = 0; i < n; i++) {
@@ -71,9 +71,9 @@ export function buisRear(b, mat, f, railTop, sightY, up = true, o = {}) {
   }
   const y0 = baseTop - 0.002;
   const top = sightY + 0.0062;
-  let outline = [[-0.0082, y0], [0.0082, y0], [0.0082, sightY + 0.002, 0.002], [0.0058, top, 0.002], [-0.0058, top, 0.002], [-0.0082, sightY + 0.002, 0.002]];
+  let outline = [[-0.0085, y0], [0.0085, y0], [0.0085, sightY + 0.002, 0.002], [0.0062, top + 0.001, 0.002], [-0.0062, top + 0.001, 0.002], [-0.0085, sightY + 0.002, 0.002]];
   if (o.style === 'drum') outline = ringStem(0, sightY, 0.0078, 0.0050, y0, b.fp ? 20 : 8);
-  const hole = circlePts(0, sightY, o.aperture || 0.0021, o.aperture || 0.0021, b.fp ? 16 : 8).reverse();
+  const hole = circlePts(0, sightY, o.aperture || 0.0030, o.aperture || 0.0030, b.fp ? 20 : 8).reverse();
   const g = extrudeSection(outline, 0.0032, b.q, { holes: [hole], bevel: 0.0004 });
   const pv = up ? null : pivotX(y0 + 0.001, f, Math.PI / 2);
   let m = mtx(0, 0, f - 0.0016);
@@ -454,10 +454,11 @@ function railJaws(b, mat, x, railTop, f, len) {
  * Creates lens/reticle meshes and the 'sight' anchor. Returns { sightY, eyeF, lensRadius, x }.
  */
 export function optic(b, type, fm, railTop, o = {}) {
+  if (!Number.isFinite(fm) || !Number.isFinite(railTop)) throw new Error(`${b.id}: no mount position for optic '${type}'`);
   const x0 = o.x || 0;
   const t = o.slide || b;
   const fp = b.fp;
-  const seg = b.q.seg;
+  const seg = b.fp ? 36 : b.q.seg;
   let res;
   if (type === 'reddot' && o.pistol) {
     // Trijicon RMR on a pistol slide
@@ -473,7 +474,7 @@ export function optic(b, type, fm, railTop, o = {}) {
     }
     t.box('glass', x0, ya - 0.0005, fm + 0.0145, 0.019, 0.016, 0.0006);
     const eyeF = fm - 0.022 - (o.eye ?? 0.30);
-    t.special(reticleMesh('reddot', x0, ya, fm + 0.014, fm + 0.014 - eyeF, 3.5));
+    t.special(reticleMesh('reddot', x0, ya, fm + 0.014, fm + 0.014 - eyeF, 8));
     res = { sightY: ya, eyeF, lensRadius: 0, x: x0 };
   } else if (type === 'reddot') {
     // Aimpoint T-2 on a lower 1/3 riser
@@ -507,7 +508,7 @@ export function optic(b, type, fm, railTop, o = {}) {
     glass(t, x0, ya, fm - 0.026, 0.0108);
     glass(t, x0, ya, fm + 0.026, 0.0108);
     const eyeF = fm - 0.031 - (o.eye ?? 0.10);
-    t.special(reticleMesh('reddot', x0, ya, fm + 0.012, fm + 0.012 - eyeF, 4));
+    t.special(reticleMesh('reddot', x0, ya, fm + 0.012, fm + 0.012 - eyeF, 7));
     res = { sightY: ya, eyeF, lensRadius: 0, x: x0 };
   } else if (type === 'holo') {
     // EOTech EXPS3
@@ -599,7 +600,7 @@ export function optic(b, type, fm, railTop, o = {}) {
       [0.0222, fm - 0.151], [0.0228, fm - 0.148], [0.0228, fm - 0.128], [0.0216, fm - 0.124], [0.0182, fm - 0.111], [0.0151, fm - 0.098],
       [0.0151, fm - 0.036], [0.0183, fm - 0.031], [0.0183, fm + 0.031], [0.0151, fm + 0.036], [0.0151, fm + 0.084],
       [0.0284, fm + 0.130], [0.0290, fm + 0.135], [0.0290, fm + 0.160], [0.0283, fm + 0.163], [0.0283, fm + 0.236],
-      [0.0279, fm + 0.239], [0.0252, fm + 0.239], [0.0249, fm + 0.233], [0, fm + 0.233]], { x: x0, y: ya, seg: b.fp ? 28 : 10 });
+      [0.0279, fm + 0.239], [0.0252, fm + 0.239], [0.0249, fm + 0.233], [0, fm + 0.233]], { x: x0, y: ya, seg: b.fp ? 40 : 10 });
     // turrets
     t.cylY(sm, x0, ya + 0.0205, fm, 0.0125, 0.007, { seg: 18 });
     t.cylY(sm, x0, ya + 0.0335, fm, 0.0168, 0.020, { seg: 24 });

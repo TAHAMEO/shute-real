@@ -375,7 +375,7 @@ function g36c(b, att) {
   b.anchor('rightHand', 0, gp[1], gp[0]);
   b.anchor('eject', 0.0215, 0.004, 0.106, EJECT_ROT);
   if (att.optic === 'iron') ironSight(b, sy, 0.0285);
-  else optic(b, att.optic, { reddot: 0.098, holo: 0.110 }[att.optic], railTop, { h: att.optic === 'reddot' ? 0.030 : 0.036 });
+  else optic(b, att.optic, { reddot: 0.098, holo: 0.110, acog: 0.084 }[att.optic], railTop, { h: { reddot: 0.030, holo: 0.036, acog: 0.032 }[att.optic] });
   const lh = att.grip !== 'none' ? foregrip(b, att.grip, 0.312, -0.037) : null;
   b.anchor('leftHand', ...(lh || [0, -0.033, 0.312]));
 }
