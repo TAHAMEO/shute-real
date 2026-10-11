@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>WebGL test</title>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<style>html,body{margin:0;background:#000}</style></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+const r = new THREE.WebGLRenderer({ antialias: true });
+r.setSize(innerWidth, innerHeight); document.body.appendChild(r.domElement);
+r.toneMapping = THREE.ACESFilmicToneMapping;
+const s = new THREE.Scene(); const c = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
+c.position.set(0, 2, 6);
+const sky = new Sky(); sky.scale.setScalar(450000); s.add(sky);
+sky.material.uniforms.sunPosition.value.set(1, 0.2, -1);
+const m = new THREE.Mesh(new THREE.TorusKnotGeometry(1, 0.3, 128, 16), new THREE.MeshStandardMaterial({ color: 0x886644, metalness: 0.5, roughness: 0.4 }));
+m.position.y = 2; s.add(m); s.add(new THREE.HemisphereLight(0xffffff, 0x444422, 2)); const d = new THREE.DirectionalLight(0xffffff, 3); d.position.set(3, 5, 2); s.add(d);
+r.render(s, c);
+const gl = r.getContext(); const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+console.log('renderer:', dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'n/a', 'webgl2:', r.capabilities.isWebGL2, 'maxTex', r.capabilities.maxTextureSize, 'vtf', r.capabilities.maxVertexTextures, 'floatLinear', !!gl.getExtension('OES_texture_float_linear'));
+window.__READY = true;
+</script></body></html>
