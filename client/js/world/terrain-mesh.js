@@ -159,6 +159,7 @@ function makeTerrainMaterial(world, baker, groundTex, env) {
           vec3 baseN = grassN;
           if (uAlpine > 0.5) {
             vec4 gv = tri(tGravel, uvV);
+            gv.rgb *= 0.8;
             float g = smoothstep(0.35, 0.65, macro2 + slope * 1.2);
             base = mix(base, gv, g);
             baseN = normalize(mix(baseN, nrm(tGravelN, uvV), g));

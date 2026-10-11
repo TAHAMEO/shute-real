@@ -170,6 +170,8 @@ function makeMaterial(shared, patch) {
           float back = pow(max(dot(toFrag, uSunDirView), 0.0), 3.0);
           float lit = clamp(dot(reflectedLight.directDiffuse, vec3(0.333)) / max(dot(diffuseColor.rgb, vec3(0.333)), 0.02) * 0.35, 0.0, 1.0);
           outgoingLight += diffuseColor.rgb * uSunCol * back * lit * (0.25 + vGrassT) * 0.9;
+          // Thin matte blades: keep little of the grazing-angle sky reflection (reads as white sheen).
+          outgoingLight -= totalSpecular * 0.7;
           // Darken the base (self-occlusion).
           outgoingLight *= 0.55 + 0.45 * smoothstep(0.0, 0.6, vGrassT);
         }
@@ -203,7 +205,7 @@ export class GrassSystem {
       uDensity: { value: grass.density ?? 1 },
       uColBase: { value: new THREE.Color(grass.base) },
       uColTip: { value: new THREE.Color(grass.tip) },
-      uColDry: { value: new THREE.Color('#c9b06a') },
+      uColDry: { value: new THREE.Color(grass.dry || '#c9b06a') },
       uDryness: { value: grass.dryness ?? 0.4 },
       uSunDirView: { value: new THREE.Vector3() },
       uSunDir: { value: new THREE.Vector3(0, 1, 0) },

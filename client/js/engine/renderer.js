@@ -36,6 +36,7 @@ uniform float uFogDensity;
 uniform float uFogFalloff;
 uniform float uFogBase;
 uniform float uFogMax;
+uniform float uSkyBlend;
 uniform vec3 uRaysColor;
 
 vec3 viewPosFromDepth(vec2 uv, float depth) {
@@ -71,7 +72,7 @@ void main() {
     if (uUseSkyFog > 0.5) {
       // Blend toward the actual sky colour behind the fragment so distant terrain melts into the horizon.
       vec3 sky = texture2D(tSkyFog, vUv).rgb;
-      fogCol = mix(fogCol, sky, smoothstep(250.0, 1600.0, dist) * 0.85);
+      fogCol = mix(fogCol, sky, smoothstep(250.0, 1600.0, dist) * uSkyBlend);
     }
     fogCol += uSunColor * sunAmt * 0.35;
     col = mix(col, fogCol, fog);
@@ -254,6 +255,7 @@ export class RenderSystem {
       fogFalloff: 0.006,
       fogBase: 0,
       fogMax: 0.97,
+      skyBlend: 0.85,
       exposure: 1.0,
       saturation: 1.05,
       contrast: 1.04,
@@ -309,7 +311,7 @@ export class RenderSystem {
         uUseAO: { value: 0 }, uUseRays: { value: 0 }, uUseSkyFog: { value: 0 }, uAOStrength: { value: 0.85 },
         uProjInv: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
         uFogColor: { value: new THREE.Color() }, uSunColor: { value: new THREE.Color() }, uSunDir: { value: new THREE.Vector3() },
-        uFogDensity: { value: 0.001 }, uFogFalloff: { value: 0.005 }, uFogBase: { value: 0 }, uFogMax: { value: 0.97 },
+        uFogDensity: { value: 0.001 }, uFogFalloff: { value: 0.005 }, uFogBase: { value: 0 }, uFogMax: { value: 0.97 }, uSkyBlend: { value: 0.85 },
         uRaysColor: { value: new THREE.Color() },
       },
     });
@@ -412,6 +414,7 @@ export class RenderSystem {
     u.uFogFalloff.value = e.fogFalloff;
     u.uFogBase.value = e.fogBase;
     u.uFogMax.value = e.fogMax;
+    u.uSkyBlend.value = e.skyBlend;
     u.uRaysColor.value.copy(e.raysColor).multiplyScalar(e.raysIntensity);
   }
 

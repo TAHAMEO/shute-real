@@ -23,6 +23,14 @@ rs.setQuality({ renderScale: g.renderScale, ao: g.ao, bloom: g.bloom, antialias:
 rs.setSize(innerWidth, innerHeight);
 const view = new WorldView(rs, world);
 await view.build((p, t) => console.log('build', p.toFixed(2), t), g);
+// Lighting overrides for tuning: exp, fogd, skyblend, hemi, envi, sun.
+const num = (k) => (P.get(k) !== null ? Number(P.get(k)) : null);
+if (num('exp') !== null) rs.env.exposure = num('exp');
+if (num('fogd') !== null) rs.env.fogDensity = num('fogd');
+if (num('skyblend') !== null) rs.env.skyBlend = num('skyblend');
+if (num('hemi') !== null) view.sky.hemi.intensity = num('hemi');
+if (num('envi') !== null) rs.scene.environmentIntensity = num('envi');
+if (num('sun') !== null) view.sky.sun.intensity = num('sun');
 // Camera placement.
 let x = 0, z = 0;
 const poi = P.get('poi');

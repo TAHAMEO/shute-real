@@ -68,6 +68,7 @@ export class WorldView {
     if (graphics.vegetation !== false) try {
       const rocks = await import('./rocks.js');
       this.rocks = new rocks.RockSystem({ scene: rs.scene, quality: graphics.treeDetail || 'high' });
+      if (this.env.rockTint) this.rocks.uniforms.uRockMul.value.set(this.env.rockTint);
       this.rocks.build(world.rocks);
     } catch (e) {
       console.warn('Rocks unavailable:', e);

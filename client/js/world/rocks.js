@@ -503,6 +503,7 @@ uniform sampler2D tRockNormal;
 uniform vec4 uRockParams;   // x = texture frequency (1/m), y = normal strength, z = lichen amount, w = moss amount
 uniform vec3 uRockLichen;
 uniform vec3 uRockMoss;
+uniform vec3 uRockMul;     // per-map albedo tint
 varying vec3 vRockW;
 varying vec3 vRockN;
 varying vec4 vRockTint;
@@ -528,7 +529,7 @@ rockCol = mix( rockCol, uRockLichen * ( 0.75 + 0.5 * rockA.r ), clamp( rockLiche
 // moss/dirt near the ground contact and in crevices
 float rockLow = 1.0 - smoothstep( -0.65, -0.15, vRockY );
 rockCol = mix( rockCol, uRockMoss * ( 0.8 + 0.4 * rockA.g ), clamp( ( rockLow * 0.7 + ( 1.0 - vRockAO ) * 0.5 ) * uRockParams.w, 0.0, 0.85 ) );
-rockCol *= mix( 0.42, 1.0, vRockAO ) * vRockTint.rgb;
+rockCol *= mix( 0.42, 1.0, vRockAO ) * vRockTint.rgb * uRockMul;
 diffuseColor.rgb *= rockCol;
 `)
     .replace('#include <roughnessmap_fragment>', `
@@ -599,6 +600,7 @@ export class RockSystem {
       uRockParams: { value: new THREE.Vector4(0.42, 0.9, 1.0, 0.35) },
       uRockLichen: { value: new THREE.Color('#a7ab86') },
       uRockMoss: { value: new THREE.Color('#4a5230') },
+      uRockMul: { value: new THREE.Color(1, 1, 1) },
       tRockPos: { value: null },
       tRockNrm: { value: null },
     };

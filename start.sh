@@ -29,6 +29,17 @@ URL="http://localhost:$PORT"
 # Chromium-based browsers often block the GPU on Linux; these flags turn hardware acceleration on.
 GPU_FLAGS="--ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy --disable-features=UseChromeOSDirectVideoDecoder"
 open_browser() {
+  # Chromium refuses to run as root, so root sessions use Firefox (Kali's default browser).
+  if [ "$(id -u)" -eq 0 ]; then
+    for b in firefox firefox-esr; do
+      if command -v "$b" >/dev/null 2>&1; then
+        "$b" --new-window "$URL" >/dev/null 2>&1 &
+        return 0
+      fi
+    done
+    echo "Running as root: open $URL in your browser."
+    return 0
+  fi
   for b in chromium chromium-browser google-chrome google-chrome-stable brave-browser microsoft-edge; do
     if command -v "$b" >/dev/null 2>&1; then
       "$b" $GPU_FLAGS --app="$URL" --start-maximized --user-data-dir="$HOME/.config/shute-real-browser" >/dev/null 2>&1 &

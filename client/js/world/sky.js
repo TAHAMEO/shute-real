@@ -96,9 +96,10 @@ export class SkySystem {
     pmrem.dispose();
     envSky.material.dispose();
     rs.scene.environment = this.envRT.texture;
-    rs.scene.environmentIntensity = this.env.overcast ? 0.9 : 0.8;
+    // An overcast sky is several times brighter than a clear one, so maps set their own level.
+    rs.scene.environmentIntensity = this.env.envIntensity ?? 0.8;
     rs.vmScene.environment = this.envRT.texture;
-    rs.vmScene.environmentIntensity = this.env.overcast ? 1.1 : 1.0;
+    rs.vmScene.environmentIntensity = this.env.vmEnvIntensity ?? 1.0;
     // Renderer env settings.
     const e = rs.env;
     e.sunDir.copy(this.sunDir);
@@ -107,6 +108,7 @@ export class SkySystem {
     e.fogDensity = this.env.fog.density;
     e.fogFalloff = this.env.fog.heightFalloff;
     e.fogBase = 0;
+    e.skyBlend = this.env.fog.skyBlend ?? 0.85;
     e.exposure = this.env.exposure;
     e.raysColor.set(this.env.sun.color);
     e.raysIntensity = this.env.overcast ? 0.0 : (this.env.sun.elevation < 15 ? 0.7 : 0.45);
