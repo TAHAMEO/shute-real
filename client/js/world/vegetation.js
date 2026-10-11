@@ -698,7 +698,7 @@ function genShrub(rng, v) {
   const n = 46;
   for (let k = 0; k < n; k++) {
     const az = rng() * TAU;
-    const el = Math.asin(rng() * 1.6 - 0.45);
+    const el = Math.asin(Math.min(1, rng() * 1.45 - 0.45));
     const r = 0.55 + 0.4 * Math.sqrt(rng());
     const p = [C[0] + Math.sin(az) * Math.cos(el) * R[0] * r, C[1] + Math.sin(el) * R[1] * r, C[2] + Math.cos(az) * Math.cos(el) * R[2] * r];
     const out = norm(sub(p, [0, 0, 0]));
@@ -749,7 +749,7 @@ function genJuniper(rng, v) {
   const n = 54;
   for (let k = 0; k < n; k++) {
     const az = rng() * TAU;
-    const el = Math.asin(rng() * 1.5 - 0.4);
+    const el = Math.asin(Math.min(1, rng() * 1.4 - 0.4));
     const r = 0.5 + 0.45 * Math.sqrt(rng());
     const p = [Math.sin(az) * Math.cos(el) * R[0] * r, C[1] + Math.sin(el) * R[1] * r, Math.cos(az) * Math.cos(el) * R[2] * r];
     const ax = norm(add(norm([p[0], 0.2, p[2]]), [0, 0.7, 0]));
@@ -1301,7 +1301,7 @@ export class VegetationSystem {
         warned = true;
         si = 0;
       }
-      const vi = si * TREE_VARIANTS + Math.floor(hash2(t.x, t.z, 7) * TREE_VARIANTS);
+      const vi = si * TREE_VARIANTS + (t.variant !== undefined ? t.variant % TREE_VARIANTS : Math.floor(hash2(t.x, t.z, 7) * TREE_VARIANTS));
       tVar[i] = vi;
       varCount[vi]++;
       const s = t.scale || 1;
@@ -1338,7 +1338,7 @@ export class VegetationSystem {
       const t = bushes[i];
       let si = BUSH_SPECIES.indexOf(t.species);
       if (si < 0) si = 0;
-      const vi = si * BUSH_VARIANTS + Math.floor(hash2(t.x, t.z, 3) * BUSH_VARIANTS);
+      const vi = si * BUSH_VARIANTS + (t.variant !== undefined ? t.variant % BUSH_VARIANTS : Math.floor(hash2(t.x, t.z, 3) * BUSH_VARIANTS));
       bVar[i] = vi;
       bCount[vi]++;
       bPos[i * 3] = t.x; bPos[i * 3 + 1] = t.y; bPos[i * 3 + 2] = t.z;

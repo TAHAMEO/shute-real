@@ -27,7 +27,7 @@ if (evalCode) {
   if (r !== undefined) console.log('[eval]', typeof r === 'string' ? r : JSON.stringify(r));
 }
 await page.waitForTimeout(wait);
-await page.screenshot({ path: out });
+await page.screenshot({ path: out, timeout: timeout });
 console.log(`saved ${out} in ${Date.now() - t0}ms`);
 await browser.close();
 process.exit(errors ? 1 : 0);

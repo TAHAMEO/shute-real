@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Engine Lab</title>
+<style>
+  :root { --bg: #101317; --panel: #181d23; --line: #2a323c; --text: #d8dee6; --dim: #8592a3; --acc: #e0a040; --ok: #6cc070; --bad: #e05050; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.35 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: #0b0e11ee; border-bottom: 1px solid var(--line); padding: 8px 14px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 15px; letter-spacing: 0.06em; color: var(--acc); }
+  #status { color: var(--dim); font-family: ui-monospace, monospace; font-size: 12px; }
+  #meter { font-family: ui-monospace, monospace; font-size: 12px; min-width: 260px; }
+  main { padding: 10px 14px 40px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .panel h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
+  button { background: #232a33; color: var(--text); border: 1px solid #36404c; border-radius: 4px; padding: 3px 7px; margin: 2px; font: inherit; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: var(--acc); }
+  button.primary { background: #3a2c12; border-color: var(--acc); color: #ffd590; }
+  label { color: var(--dim); font-size: 12px; margin-right: 8px; white-space: nowrap; }
+  input[type=range] { width: 140px; vertical-align: middle; }
+  .row { margin: 4px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .val { font-family: ui-monospace, monospace; color: var(--text); min-width: 54px; display: inline-block; }
+  h3 { margin: 18px 0 6px; font-size: 13px; color: var(--acc); border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+  .viz { display: grid; grid-template-columns: repeat(auto-fill, minmax(222px, 1fr)); gap: 6px; }
+  .viz figure { margin: 0; background: #0b0e11; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .viz canvas { display: block; width: 100%; height: auto; }
+  .viz figcaption { font: 11px ui-monospace, monospace; padding: 2px 5px 3px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .viz figcaption b { color: var(--text); font-weight: 600; }
+  #report { font: 12px ui-monospace, monospace; white-space: pre-wrap; background: #0b0e11; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-top: 10px; }
+  .pass { color: var(--ok); } .fail { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SHUTE REAL · AUDIO LAB</h1>
+  <button id="btnInit" class="primary">Init / resume audio</button>
+  <span id="status">not initialised</span>
+  <span id="meter"></span>
+</header>
+<main>
+  <div class="grid">
+    <section class="panel">
+      <h2>Mix &amp; listener</h2>
+      <div class="row"><label>master</label><input id="vMaster" type="range" min="0" max="1" step="0.01" value="1"><label>sfx</label><input id="vSfx" type="range" min="0" max="1" step="0.01" value="1"></div>
+      <div class="row"><label>ambient</label><input id="vAmb" type="range" min="0" max="1" step="0.01" value="0.6"><label>ui</label><input id="vUi" type="range" min="0" max="1" step="0.01" value="0.8"></div>
+      <div class="row"><label>distance</label><input id="dist" type="range" min="0" max="100" step="0.5" value="0"><span class="val" id="distVal">0 m</span></div>
+      <div class="row"><label>azimuth</label><input id="az" type="range" min="-180" max="180" step="1" value="30"><span class="val" id="azVal">30°</span></div>
+      <div class="row"><label><input id="optLocal" type="checkbox" checked> own weapon (local)</label><label><input id="optSup" type="checkbox"> suppressed</label><label><input id="optIndoor" type="checkbox"> indoor</label></div>
+      <div class="row"><label>low health</label><input id="lowHp" type="range" min="0" max="1" step="0.01" value="0"><span class="val" id="lowHpVal">0</span><label><input id="optPause" type="checkbox"> paused</label></div>
+    </section>
+    <section class="panel">
+      <h2>Gunshots</h2>
+      <div class="row" id="gunBtns"></div>
+      <div class="row"><label>full auto</label><input id="rpm" type="number" value="1100" min="60" max="1500" style="width:64px"><label>rpm ×</label><input id="shots" type="number" value="30" min="1" max="200" style="width:48px"><button id="btnAuto">Fire burst</button><button id="btnFallback">'rifleXYZ' (fallback)</button></div>
+    </section>
+    <section class="panel"><h2>Mechanical</h2><div class="row" id="mechBtns"></div></section>
+    <section class="panel">
+      <h2>Movement</h2>
+      <div class="row" id="footBtns"></div>
+      <div class="row"><label><input id="optSprint" type="checkbox"> sprinting</label><label><input id="optCrouch" type="checkbox"> crouched</label><button id="btnWalk">walk ×8 (gravel)</button></div>
+      <div class="row"><button id="btnJump">jump</button><label>land intensity</label><input id="landI" type="range" min="0" max="1" step="0.05" value="0.6"><button id="btnLand">land</button></div>
+    </section>
+    <section class="panel">
+      <h2>Bullets &amp; explosives</h2>
+      <div class="row" id="impactBtns"></div>
+      <div class="row"><button id="btnWhizS">whiz supersonic</button><button id="btnWhizU">whiz subsonic</button></div>
+      <div class="row" id="casingBtns"></div>
+      <div class="row"><button id="btnExpl">explosion (distance slider)</button><button id="btnExplNear">explosion 5 m</button><button id="btnSmoke">smoke</button></div>
+    </section>
+    <section class="panel">
+      <h2>UI, feedback, ambience</h2>
+      <div class="row" id="uiBtns"></div>
+      <div class="row" id="hitBtns"></div>
+      <div class="row"><button id="btnHurtL">hurt (local)</button><button id="btnHurtR">hurt (remote)</button></div>
+      <div class="row"><select id="ambSel"><option>valley</option><option>outpost</option><option>alpine</option></select><button id="btnAmb">start ambience</button><button id="btnAmbStop">stop</button></div>
+    </section>
+  </div>
+  <div id="report"></div>
+  <div id="vizRoot"></div>
+</main>
+<script type="module">
+import { AudioEngine, AUDIO_NAMES } from '/js/engine/audio.js';
+import { measure } from '/js/engine/audio-synth.js';
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const SELFTEST = params.get('selftest') === '1';
+const VIEW = params.get('view') || 'all';
+const FIG_W = +(params.get('figw') || 222); // min figure width (px)
+const SHOW_DUR = params.get('dur') ? +params.get('dur') : null; // seconds shown for close shots
+const ONLY = params.get('only') ? params.get('only').split(',') : null; // profile filter
+const FLOOR = +(params.get('floor') || 85); // spectrogram dB range
+const engine = new AudioEngine();
+window.engine = engine;
+const log = [];
+const say = (s, cls) => { log.push(cls ? `<span class="${cls}">${s}</span>` : s); $('report').innerHTML = log.join('\n'); console.log(s.replace(/<[^>]+>/g, '')); };
+
+// ---------------------------------------------------------------- controls
+const distM = () => { const s = +$('dist').value / 100; return Math.round(1500 * Math.pow(s, 2.5) * 10) / 10; };
+const srcPos = () => { const d = distM(); const a = (+$('az').value * Math.PI) / 180; return { x: Math.sin(a) * d, y: 1.6, z: -Math.cos(a) * d }; };
+const remote = () => !$('optLocal').checked;
+const posOrNull = () => (remote() ? srcPos() : null);
+function refreshLabels() {
+  $('distVal').textContent = distM() + ' m'; $('azVal').textContent = $('az').value + '°'; $('lowHpVal').textContent = (+$('lowHp').value).toFixed(2);
+}
+const btn = (parent, label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; $(parent).appendChild(b); return b; };
+for (const p of AUDIO_NAMES.gunProfiles) btn('gunBtns', p, () => engine.playGunshot(p, { position: posOrNull(), isLocal: !remote(), suppressed: $('optSup').checked, indoor: $('optIndoor').checked }));
+for (const m of AUDIO_NAMES.mechanical) btn('mechBtns', m, () => engine.playMechanical(m, { position: posOrNull(), isLocal: !remote() }));
+const footOpts = () => ({ position: posOrNull(), isLocal: !remote(), sprinting: $('optSprint').checked, crouched: $('optCrouch').checked });
+for (const s of AUDIO_NAMES.footsteps) btn('footBtns', s, () => engine.playFootstep(s, footOpts()));
+for (const s of AUDIO_NAMES.impacts) btn('impactBtns', 'impact ' + s, () => engine.playImpact(s, remote() ? srcPos() : { x: 2, y: 0, z: -4 }));
+for (const k of AUDIO_NAMES.casings) btn('casingBtns', 'casing ' + k, () => engine.playShellCasing(k, remote() ? srcPos() : { x: 0.4, y: 0, z: -0.5 }));
+for (const u of AUDIO_NAMES.ui) btn('uiBtns', u, () => engine.playUI(u));
+for (const h of AUDIO_NAMES.hitmarkers) btn('hitBtns', 'hit:' + h, () => engine.playHitmarker(h));
+$('btnFallback').onclick = () => engine.playGunshot('rifleXYZ', { position: posOrNull(), isLocal: !remote() });
+$('btnAuto').onclick = () => fireBurst('rifle556');
+$('btnWalk').onclick = () => { for (let i = 0; i < 8; i++) setTimeout(() => engine.playFootstep('gravel', footOpts()), i * ($('optSprint').checked ? 300 : 480)); };
+$('btnJump').onclick = () => engine.playJump({ position: posOrNull(), isLocal: !remote() });
+$('btnLand').onclick = () => engine.playLand(+$('landI').value, { position: posOrNull(), isLocal: !remote(), surface: 'gravel' });
+$('btnWhizS').onclick = () => engine.playWhiz({ x: 1.5, y: 1.7, z: -2 }, true);
+$('btnWhizU').onclick = () => engine.playWhiz({ x: -1.5, y: 1.7, z: -2 }, false);
+$('btnExpl').onclick = () => engine.playExplosion(srcPos());
+$('btnExplNear').onclick = () => engine.playExplosion({ x: 3, y: 0, z: -4 });
+$('btnSmoke').onclick = () => engine.playSmoke(remote() ? srcPos() : { x: 2, y: 0, z: -5 });
+$('btnHurtL').onclick = () => engine.playHurt(true);
+$('btnHurtR').onclick = () => engine.playHurt(false);
+$('btnAmb').onclick = () => engine.startAmbient($('ambSel').value);
+$('btnAmbStop').onclick = () => engine.stopAmbient();
+const vols = () => engine.setVolumes({ master: +$('vMaster').value, sfx: +$('vSfx').value, ambient: +$('vAmb').value, ui: +$('vUi').value });
+for (const id of ['vMaster', 'vSfx', 'vAmb', 'vUi']) $(id).oninput = vols;
+$('lowHp').oninput = () => { refreshLabels(); engine.setLowHealth(+$('lowHp').value); };
+$('optPause').onchange = () => engine.setPaused($('optPause').checked);
+for (const id of ['dist', 'az']) $(id).oninput = refreshLabels;
+refreshLabels();
+engine.setListener({ x: 0, y: 1.6, z: 0 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 1, z: 0 });
+
+function fireBurst(profile, n = +$('shots').value, rpm = +$('rpm').value) {
+  const dt = 60 / rpm;
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      engine.playGunshot(profile, { position: posOrNull(), isLocal: !remote(), suppressed: $('optSup').checked, indoor: $('optIndoor').checked });
+      engine.playShellCasing('rifle', { x: 0.5, y: 0, z: -0.3 });
+    }, i * dt * 1000);
+  }
+}
+
+// ---------------------------------------------------------------- live meter (post-limiter tap)
+let analyser = null; let peakHold = 0; let maxPeak = 0; let maxVoices = 0;
+function tapOutput() {
+  if (analyser || !engine.outputNode) return;
+  analyser = engine.context.createAnalyser(); analyser.fftSize = 2048;
+  engine.outputNode.connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  setInterval(() => {
+    analyser.getFloatTimeDomainData(buf);
+    let p = 0; let e = 0;
+    for (let i = 0; i < buf.length; i++) { const a = Math.abs(buf[i]); if (a > p) p = a; e += buf[i] * buf[i]; }
+    maxPeak = Math.max(maxPeak, p); peakHold = Math.max(p, peakHold * 0.95);
+    maxVoices = Math.max(maxVoices, engine.stats.voices);
+    const db = (v) => (v > 1e-6 ? (20 * Math.log10(v)).toFixed(1) : '-inf');
+    $('meter').textContent = `out peak ${db(peakHold)} dBFS · rms ${db(Math.sqrt(e / buf.length))} dBFS · voices ${engine.stats.voices}`;
+  }, 15);
+}
+function showStatus() {
+  const s = engine.stats;
+  $('status').textContent = `${s.state} · ${s.sampleRate} Hz · bank ${s.bankMs} ms (synth ${s.synthMs} ms, max block ${s.maxBlockMs} ms) · ${s.buffers} buffers · ${(s.bytes / 1048576).toFixed(1)} MB`;
+}
+$('btnInit').onclick = async () => { await engine.init(); tapOutput(); showStatus(); vols(); };
+
+// ---------------------------------------------------------------- visualisation
+const COLORS = (() => { // magma-like ramp
+  const stops = [[0, [0, 0, 4]], [0.25, [59, 15, 112]], [0.5, [140, 41, 129]], [0.75, [222, 73, 104]], [0.9, [254, 159, 109]], [1, [252, 253, 191]]];
+  const lut = [];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255; let k = 0; while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const [t0, c0] = stops[k]; const [t1, c1] = stops[k + 1]; const u = (t - t0) / (t1 - t0);
+    lut.push(c0.map((v, j) => Math.round(v + (c1[j] - v) * u)));
+  }
+  return lut;
+})();
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len; const wr = Math.cos(ang); const wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1; let ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k; const b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci; const ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+const db = (v) => (v > 1e-9 ? 20 * Math.log10(v) : -180);
+function drawBuffer(fig, buffer, { title = '', channel = 0, maxDur = null, W = 440, H = 220 } = {}) {
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; fig.appendChild(cv);
+  const g = cv.getContext('2d'); const d = buffer.getChannelData(channel); const sr = buffer.sampleRate;
+  const dur = Math.min(buffer.duration, maxDur || buffer.duration); const n = Math.floor(dur * sr);
+  const wH = Math.round(H * 0.38); const sH = H - wH;
+  g.fillStyle = '#0b0e11'; g.fillRect(0, 0, W, H);
+  // time grid (100 ms)
+  g.strokeStyle = '#1f2630'; g.lineWidth = 1;
+  for (let t = 0.1; t < dur; t += 0.1) { const x = Math.round((t / dur) * W) + 0.5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, wH); g.stroke(); }
+  // waveform min/max + RMS envelope
+  let peak = 0; for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+  const scale = (wH / 2 - 2);
+  g.strokeStyle = '#6fa8dc';
+  for (let x = 0; x < W; x++) {
+    const a = Math.floor((x / W) * n); const b = Math.max(a + 1, Math.floor(((x + 1) / W) * n));
+    let mn = 1e9; let mx = -1e9; let e = 0;
+    for (let i = a; i < b; i++) { const v = d[i]; if (v < mn) mn = v; if (v > mx) mx = v; e += v * v; }
+    g.beginPath(); g.moveTo(x + 0.5, wH / 2 - mx * scale); g.lineTo(x + 0.5, wH / 2 - mn * scale + 0.5); g.stroke();
+    const r = Math.sqrt(e / (b - a)); g.fillStyle = '#e0a040'; g.fillRect(x, wH / 2 - r * scale, 1, 1); g.fillRect(x, wH / 2 + r * scale, 1, 1);
+  }
+  g.strokeStyle = '#3a4350'; g.beginPath(); g.moveTo(0, wH + 0.5); g.lineTo(W, wH + 0.5); g.stroke();
+  // spectrogram (log frequency 30 Hz .. min(18 kHz, nyquist))
+  const N = 1024; const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+  const fLo = 30; const fHi = Math.min(18000, sr / 2); const img = g.createImageData(W, sH);
+  const re = new Float64Array(N); const im = new Float64Array(N); const mags = new Float32Array(N / 2);
+  const rowBin = []; for (let y = 0; y < sH; y++) { const f = fLo * Math.pow(fHi / fLo, 1 - y / (sH - 1)); rowBin.push((f / sr) * N); }
+  for (let x = 0; x < W; x++) {
+    const c = Math.floor(((x + 0.5) / W) * n) - N / 2;
+    for (let i = 0; i < N; i++) { const k = c + i; re[i] = k >= 0 && k < d.length ? d[k] * win[i] : 0; im[i] = 0; }
+    fft(re, im);
+    for (let k = 0; k < N / 2; k++) mags[k] = Math.hypot(re[k], im[k]) / (N / 4);
+    for (let y = 0; y < sH; y++) {
+      const bf = rowBin[y]; const k0 = Math.floor(bf); const fr = bf - k0;
+      const m = (mags[k0] || 0) * (1 - fr) + (mags[k0 + 1] || 0) * fr;
+      const v = clamp01((db(m) + FLOOR) / FLOOR); const col = COLORS[Math.round(v * 255)];
+      const o = (y * W + x) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, wH);
+  g.fillStyle = '#8592a3'; g.font = '10px monospace';
+  for (const f of [100, 1000, 10000]) { if (f >= fHi) continue; const y = wH + (1 - Math.log(f / fLo) / Math.log(fHi / fLo)) * (sH - 1); g.fillText(f >= 1000 ? f / 1000 + 'k' : f, 2, y - 1); g.fillRect(0, y, 4, 1); }
+  return { peak, dur };
+}
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+function addFig(root, buffer, name, opts = {}) {
+  if (!buffer) return;
+  const fig = document.createElement('figure');
+  const meta = (engine.bank && engine.bank.meta.get(buffer)) || {};
+  const m = measure(buffer.getChannelData(0), buffer.sampleRate, opts.win || 0.15);
+  drawBuffer(fig, buffer, opts);
+  const cap = document.createElement('figcaption');
+  cap.innerHTML = `<b>${name}</b> ${(buffer.duration * 1000).toFixed(0)}ms pk ${m.peakDb.toFixed(1)} L ${m.loudDb.toFixed(1)} ${buffer.sampleRate / 1000}k`;
+  fig.appendChild(cap); root.appendChild(fig);
+  return m;
+}
+function section(title) {
+  const h = document.createElement('h3'); h.textContent = title; $('vizRoot').appendChild(h);
+  const div = document.createElement('div'); div.className = 'viz'; div.style.gridTemplateColumns = `repeat(auto-fill, minmax(${FIG_W}px, 1fr))`; $('vizRoot').appendChild(div); return div;
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** Offline preview of a local shot through the engine's outdoor reverb send (dry + tail). */
+async function renderWithTail(buffer, send, ir) {
+  const sr = ir.sampleRate; const oc = new OfflineAudioContext(2, Math.ceil(sr * 2.6), sr);
+  const s = oc.createBufferSource(); s.buffer = buffer; s.connect(oc.destination);
+  const g = oc.createGain(); g.gain.value = send; const cv = oc.createConvolver(); cv.normalize = false; cv.buffer = ir;
+  s.connect(g); g.connect(cv); cv.connect(oc.destination); s.start();
+  return oc.startRendering();
+}
+
+async function drawAll() {
+  const B = engine.bank; if (!B) return;
+  const want = (k) => VIEW === 'all' || VIEW === k;
+  if (want('weapons')) {
+    const root = section('Gunshots: close, 3 variants each (waveform with RMS envelope over log-frequency spectrogram, 30 Hz to 18 kHz)');
+    const rows = [];
+    for (const p of AUDIO_NAMES.gunProfiles) {
+      if (ONLY && !ONLY.includes(p)) continue;
+      B.gun[p].n.forEach((b, v) => { const m = addFig(root, b, `${p}#${v}`, { maxDur: SHOW_DUR || 0.6, W: FIG_W * 2, H: FIG_W }); if (v === 0) rows.push(`${p.padEnd(10)} pk ${m.peakDb.toFixed(1).padStart(5)}  L ${m.loudDb.toFixed(1).padStart(6)}  ${(b.duration * 1000).toFixed(0)} ms`); });
+      await tick();
+    }
+    console.log('[loudness close v0]\n' + rows.join('\n'));
+  }
+  if (want('suppressed')) {
+    const root = section('Gunshots: suppressed, 2 variants each');
+    for (const p of AUDIO_NAMES.gunProfiles) { if (ONLY && !ONLY.includes(p)) continue; B.gun[p].s.forEach((b, v) => addFig(root, b, `${p} sup#${v}`, { maxDur: SHOW_DUR || 0.45, W: FIG_W * 2, H: FIG_W })); await tick(); }
+  }
+  if (want('far')) {
+    const root = section('Distant shots (far class, 11 kHz): dull thump + rolling echo');
+    for (const c of Object.keys(B.gunFar)) B.gunFar[c].forEach((b, v) => addFig(root, b, `far ${c}#${v}`, { win: 0.3 }));
+    const r2 = section('Local shots with outdoor reverb tail (offline preview of dry + send x tail through the generated IR)');
+    for (const p of ['pistol9', 'rifle556', 'rifle762', 'shotgun', 'sniper338', 'sniper50']) {
+      const tail = { pistol9: 0.8, rifle556: 1, rifle762: 1.15, shotgun: 1.25, sniper338: 1.6, sniper50: 1.9 }[p];
+      addFig(r2, await renderWithTail(B.gun[p].n[0], 0.42 * tail, B.ir.outdoor), `${p} + tail`);
+    }
+  }
+  if (want('other')) {
+    const r1 = section('Explosion, impulse responses, smoke');
+    B.explosion.near.forEach((b, v) => addFig(r1, b, `explosion near#${v}`, { win: 0.3 }));
+    B.explosion.far.forEach((b, v) => addFig(r1, b, `explosion far#${v}`, { win: 0.5 }));
+    addFig(r1, B.ir.outdoor, 'IR outdoor (L)'); addFig(r1, B.ir.outdoor, 'IR outdoor (R)', { channel: 1 }); addFig(r1, B.ir.indoor, 'IR indoor (L)');
+    addFig(r1, B.smoke, 'smoke'); addFig(r1, B.rockfall[0], 'rockfall#0'); addFig(r1, B.rustle[0], 'rustle#0');
+    addFig(r1, B.wind, 'wind loop'); addFig(r1, B.insects, 'insect loop', { maxDur: 3 });
+    const r2 = section('Footsteps (4 variants per surface) + jump/land/gear');
+    for (const s of AUDIO_NAMES.footsteps) B.foot[s].forEach((b, v) => addFig(r2, b, `step ${s}#${v}`));
+    B.jump.forEach((b, v) => addFig(r2, b, `jump#${v}`)); B.land.forEach((b, v) => addFig(r2, b, `land#${v}`)); B.gear.forEach((b, v) => addFig(r2, b, `gear#${v}`));
+    await tick();
+    const r3 = section('Bullet impacts, whiz, casings');
+    for (const s of AUDIO_NAMES.impacts) B.impact[s].forEach((b, v) => addFig(r3, b, `impact ${s}#${v}`));
+    B.whiz.super.forEach((b, v) => addFig(r3, b, `whiz super#${v}`)); B.whiz.sub.forEach((b, v) => addFig(r3, b, `whiz sub#${v}`));
+    for (const k of AUDIO_NAMES.casings) B.casing[k].forEach((b, v) => addFig(r3, b, `casing ${k}#${v}`));
+    await tick();
+    const r4 = section('Mechanical / foley');
+    for (const m of AUDIO_NAMES.mechanical) addFig(r4, B.mech[m], m);
+    await tick();
+    const r5 = section('Hitmarkers, UI, hurt, heartbeat');
+    for (const k of AUDIO_NAMES.hitmarkers) addFig(r5, B.hit[k], `hit ${k}`);
+    for (const u of AUDIO_NAMES.ui) addFig(r5, B.ui[u], `ui ${u}`);
+    B.hurt.local.forEach((b, v) => addFig(r5, b, `hurt local#${v}`)); B.hurt.remote.forEach((b, v) => addFig(r5, b, `hurt remote#${v}`));
+    addFig(r5, B.heart, 'heartbeat');
+  }
+}
+
+// ---------------------------------------------------------------- self-test
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function selftest() {
+  const t0 = performance.now();
+  // 1. pre-init / unavailable: every method must be a silent no-op
+  const cold = new AudioEngine(); let coldOk = true;
+  try {
+    cold.setVolumes({ master: 0.5 }); cold.setListener({ x: 1, y: 2, z: 3 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 1, z: 0 });
+    cold.playGunshot('rifle556', { isLocal: true }); cold.playMechanical('charge'); cold.playFootstep('grass'); cold.playJump(); cold.playLand(1);
+    cold.playImpact('metal', { x: 1, y: 0, z: 0 }); cold.playWhiz(null); cold.playShellCasing('rifle', null); cold.playHitmarker('kill');
+    cold.playExplosion(null); cold.playSmoke(null); cold.playUI('click'); cold.playHurt(true); cold.startAmbient('valley'); cold.stopAmbient();
+    cold.setLowHealth(1); cold.setPaused(true); cold.setPaused(false); cold.dispose();
+    void cold.ready; void cold.context;
+  } catch (e) { coldOk = false; say('pre-init call threw: ' + e.message, 'fail'); }
+  say(`pre-init no-op calls: ${coldOk ? 'PASS' : 'FAIL'}`, coldOk ? 'pass' : 'fail');
+
+  // 2. init (twice: must be safe) and bank timing
+  const ti = performance.now();
+  await Promise.all([engine.init(), engine.init()]);
+  const initMs = Math.round(performance.now() - ti);
+  tapOutput(); showStatus();
+  const s = engine.stats;
+  say(`init ${initMs} ms · bank synth ${s.synthMs} ms · longest main-thread block ${s.maxBlockMs} ms · ${s.buffers} buffers · ${(s.bytes / 1048576).toFixed(2)} MB · ctx ${s.sampleRate} Hz (hi ${s.rates.hi} / lo ${s.rates.lo} / far ${s.rates.far})`, s.synthMs < 2000 ? 'pass' : 'fail');
+  say(`ready=${engine.ready} state=${s.state}`);
+
+  // 3. every API method once (plus all names), errors captured
+  const errors = [];
+  const origWarn = console.warn; console.warn = (...a) => { errors.push(a.map(String).join(' ')); origWarn(...a); };
+  const L = { x: 0, y: 1.6, z: 0 };
+  const at = (d, deg = 30) => { const a = (deg * Math.PI) / 180; return { x: Math.sin(a) * d, y: 1.6, z: -Math.cos(a) * d }; };
+  engine.setVolumes({ master: 1, sfx: 1, ambient: 0.6, ui: 0.8 });
+  engine.setVolumes({ ui: 0.8 });
+  engine.setListener(L, { x: 0, y: 0, z: -1 }, { x: 0, y: 1, z: 0 });
+  engine.setListener(L, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }); // degenerate (looking straight up)
+  engine.setListener(L, { x: 0, y: 0, z: -1 }, { x: 0, y: 1, z: 0 });
+  engine.playGunshot('rifle556', { isLocal: true });
+  engine.playGunshot('pistol9', { isLocal: true, suppressed: true });
+  engine.playGunshot('rifle762', { position: at(60) });
+  engine.playGunshot('sniper50', { position: at(900, -60) });
+  engine.playGunshot('smg45', { position: at(30), suppressed: true });
+  engine.playGunshot('shotgun', { isLocal: true, indoor: true });
+  engine.playGunshot('rifleXYZ', { position: at(10) });
+  engine.playGunshot('nonsense', { position: at(5) });
+  await sleep(700);
+  for (const m of AUDIO_NAMES.mechanical) engine.playMechanical(m, { isLocal: true });
+  engine.playMechanical('mag_in', { position: at(8), isLocal: false });
+  for (const f of AUDIO_NAMES.footsteps) { engine.playFootstep(f, { isLocal: true }); engine.playFootstep(f, { position: at(12), sprinting: true }); engine.playFootstep(f, { position: at(4), crouched: true }); }
+  engine.playFootstep('lava', { isLocal: true });
+  engine.playJump({ isLocal: true }); engine.playJump({ position: at(6) });
+  engine.playLand(0.9, { isLocal: true, surface: 'metal' }); engine.playLand(0.3, { position: at(5), surface: 'wood' });
+  for (const sfc of AUDIO_NAMES.impacts) engine.playImpact(sfc, at(15));
+  engine.playImpact('unknown', at(40));
+  engine.playWhiz(at(2), true); engine.playWhiz(at(2, -40), false);
+  for (const k of AUDIO_NAMES.casings) engine.playShellCasing(k, { x: 0.4, y: 0, z: -0.4 });
+  engine.playShellCasing('none', null);
+  for (const k of AUDIO_NAMES.hitmarkers) engine.playHitmarker(k);
+  for (const u of AUDIO_NAMES.ui) engine.playUI(u);
+  engine.playHurt(true); engine.playHurt(false);
+  engine.playSmoke(at(8));
+  engine.playExplosion(at(400));
+  engine.playExplosion(at(5), {});
+  engine.startAmbient('valley');
+  await sleep(500);
+  engine.startAmbient('alpine');
+  engine.setLowHealth(0.8);
+  await sleep(600);
+  engine.setLowHealth(0);
+  engine.setPaused(true); engine.playGunshot('rifle556', { isLocal: true }); engine.playUI('click');
+  await sleep(100);
+  engine.setPaused(false);
+  engine.stopAmbient();
+  say(`API sweep: ${errors.length ? 'FAIL ' + errors.join(' | ') : 'PASS (no exceptions, no warnings)'} · max voices so far ${maxVoices}`, errors.length ? 'fail' : 'pass');
+
+  // 4. full-auto 1100 rpm burst must not clip (peak measured after limiter / soft clipper)
+  await sleep(2500);
+  maxPeak = 0; maxVoices = 0;
+  const shots = 40; const dt = 60 / 1100;
+  for (let i = 0; i < shots; i++) {
+    setTimeout(() => {
+      engine.playGunshot('rifle556', { isLocal: true });
+      engine.playShellCasing('rifle', { x: 0.5, y: 0, z: -0.3 });
+      engine.playGunshot('lmg762', { position: at(25, -30) });
+    }, i * dt * 1000);
+  }
+  await sleep(shots * dt * 1000 + 1500);
+  const pkDb = 20 * Math.log10(Math.max(1e-9, maxPeak));
+  say(`full-auto 1100 rpm x${shots} local + remote LMG: output peak ${pkDb.toFixed(2)} dBFS (${maxPeak.toFixed(3)}), max voices ${maxVoices}/48`, maxPeak <= 1.0 && maxVoices <= 48 ? 'pass' : 'fail');
+  console.warn = origWarn;
+
+  // 5. draw buffers
+  await drawAll();
+  say(`self-test done in ${Math.round(performance.now() - t0)} ms`);
+  showStatus();
+  window.__RESULT = { synthMs: s.synthMs, initMs, maxBlockMs: s.maxBlockMs, mb: s.bytes / 1048576, peak: maxPeak, voices: maxVoices, errors };
+  window.__READY = true;
+}
+
+if (SELFTEST) selftest().catch((e) => { say('self-test crashed: ' + e.stack, 'fail'); window.__READY = true; });
+else if (params.get('autoinit') === '1') $('btnInit').click();
+</script>
+</body>
+</html>

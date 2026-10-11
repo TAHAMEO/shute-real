@@ -310,6 +310,8 @@ const CONTROL_GROUPS = [
     ['Chat (team)', [['Y']]],
     ['Pause menu', [['Esc']]],
     ['Toggle HUD', [['F1']]],
+    ['Menu navigation', [['↑'], ['↓'], ['←'], ['→']], 'pad'],
+    ['Menu tabs', [['Q'], ['E']], 'tabs'],
   ]],
 ];
 
@@ -409,6 +411,8 @@ export class MenuUI {
   constructor(root, callbacks = {}) {
     this.root = root;
     this.callbacks = callbacks || {};
+    /** While a menu screen is open, <html> gets `sr-menu-open`, which hides the HUD layer. */
+    this.hideHudWhenOpen = true;
     this._screen = 'none';
     this._history = [];
     this._inMatch = false;
@@ -450,6 +454,11 @@ export class MenuUI {
   /** Current screen name. */
   get screen() {
     return this._screen;
+  }
+
+  /** The loadout screen's WeaponPreview (null until the loadout screen has been opened once). */
+  get preview() {
+    return this._preview || null;
   }
 
   /**
@@ -577,7 +586,7 @@ export class MenuUI {
     }
     setText(this._els.loadStatus, status || 'Preparing battlefield');
     const p = clamp(Number(progress) || 0, 0, 1);
-    this._els.loadBar.style.transform = `scaleX(${p})`;
+    this._els.loadBar.style.width = `${(p * 100).toFixed(2)}%`;
     setText(this._els.loadPct, `${Math.round(p * 100)}%`);
     if (tip) {
       L.fixedTip = tip;
@@ -619,6 +628,7 @@ export class MenuUI {
 
   /** Remove listeners, stop the preview and remove the DOM. */
   dispose() {
+    document.documentElement.classList.remove('sr-menu-open');
     window.removeEventListener('keydown', this._onKeyDown, true);
     window.removeEventListener('gamepadconnected', this._onPad);
     this._padActive = false;
@@ -652,6 +662,7 @@ export class MenuUI {
     this._screen = screen;
     this.menu.dataset.screen = screen;
     this.menu.classList.toggle('sr-is-closed', screen === 'none');
+    document.documentElement.classList.toggle('sr-menu-open', screen !== 'none' && this.hideHudWhenOpen !== false);
     if (screen === 'none') {
       if (document.activeElement && this.el.contains(document.activeElement)) document.activeElement.blur();
       this._updatePadLoop();
@@ -828,7 +839,10 @@ export class MenuUI {
         t.dispatchEvent(new Event('change', { bubbles: true }));
         return;
       }
-      if (t.classList.contains('sr-toggle')) { t.click(); return; }
+      if (t.classList.contains('sr-toggle')) {
+        if (t.classList.contains('sr-is-on') !== (dir === 'right')) t.click();
+        return;
+      }
     }
     this._spatial(dir);
   }
@@ -1073,7 +1087,7 @@ export class MenuUI {
   _buildMain() {
     const el = h('section.sr-screen.sr-screen-main');
     const logo = h('div.sr-logo', { 'aria-label': GAME_NAME },
-      h('div.sr-logo-mark', svg(LOGO_MARK), h('span', 'Est. 2026 · Operation')),
+      h('div.sr-logo-mark', svg(LOGO_MARK), h('span', 'EST. 2026')),
       h('div.sr-logo-word', h('span.sr-logo-a', 'SHUTE'), h('span.sr-logo-b', 'REAL')),
       h('div.sr-logo-tag', h('i'), h('span', 'TACTICAL COMBAT'), h('i')));
     const item = (key, label, desc, idx, extra = '') => h(`button.sr-mm-item${extra}`, {
@@ -1213,8 +1227,8 @@ export class MenuUI {
     const side = h('div.sr-col.sr-col-side',
       h('div.sr-panel.sr-side-panel', { style: 'flex:1' },
         h('div.sr-panel-head', h('div.sr-panel-title', 'Match settings')),
-        h('div.sr-panel-body.sr-scroll', els.form, h('div', { style: 'height:calc(var(--sr-u)*18)' }), els.summary),
-        h('div.sr-cta', els.cta)));
+        h('div.sr-panel-body.sr-scroll', els.form),
+        h('div.sr-cta', els.summary, els.cta)));
     s.body.append(left, side);
     this._setupEls = this._setupEls || {};
     this._setupEls[kind] = els;
@@ -1477,8 +1491,7 @@ export class MenuUI {
     const center = h('div.sr-lo-center',
       h('div.sr-lo-grid'), els.preview,
       h('div.sr-lo-top', h('div.sr-lo-title', els.kicker, els.name, els.cal, els.desc), els.slots),
-      h('div.sr-lo-stage'),
-      h('div.sr-lo-hint', h('span', 'Drag to rotate'), h('span', '·'), h('span', 'Scroll to zoom')),
+      h('div.sr-lo-stage', h('div.sr-lo-hint', h('span', 'Drag to rotate'), h('span', '·'), h('span', 'Scroll to zoom'), h('span', '·'), h('span', 'Double-click to reset'))),
       h('div.sr-lo-stats-wrap.sr-panel', els.stats, els.nums));
     // right
     els.right = h('div.sr-panel-body.sr-scroll', { style: 'flex:1;min-height:0' });
@@ -1783,7 +1796,7 @@ export class MenuUI {
       const el = h('button.sr-toggle', {
         type: 'button', class: v ? 'sr-is-on' : '', role: 'switch', 'aria-checked': String(!!v), 'aria-label': row.label, dataset: { fk },
         onclick: () => this._setSetting(row, !this._settingValue(row), true),
-      }, h('span.sr-toggle-track'), h('span.sr-toggle-text', v ? 'ON' : 'OFF'));
+      }, h('span.sr-toggle-opt', 'Off'), h('span.sr-toggle-opt', 'On'));
       return el;
     }
     if (row.type === 'color') {
@@ -1914,9 +1927,11 @@ export class MenuUI {
         if (note === 'crouch') sub = c.toggleCrouch ? 'Toggle' : 'Hold';
         if (note === 'ads') sub = c.toggleAds ? 'Toggle' : 'Hold';
         if (note === 'hold') sub = 'Hold';
+        if (note === 'pad') sub = 'Gamepad: D-pad · A select · B back';
+        if (note === 'tabs') sub = 'Gamepad: LB / RB';
         const keyEls = [];
         keys.forEach(([k, mod], i) => {
-          if (i > 0 && label.includes('/')) keyEls.push(h('span.sr-or', '/'));
+          if (i > 0 && (label.includes('/') || note === 'tabs')) keyEls.push(h('span.sr-or', '/'));
           if (k.startsWith('@')) keyEls.push(h('span.sr-key.sr-key-mouse', icon(k.slice(1))));
           else keyEls.push(h(`span.sr-key.sr-key-lg${mod === 'wide' ? '.sr-key-wide' : ''}`, k));
         });
@@ -1982,7 +1997,7 @@ export class MenuUI {
     els.loadFacts = h('div.sr-loading-facts');
     els.loadStatus = h('span');
     els.loadPct = h('span.sr-loading-pct', '0%');
-    els.loadBar = h('i');
+    els.loadBar = h('i', h('b'));
     els.loadTip = h('p');
     els.loading = h('div.sr-loading', { role: 'progressbar', 'aria-label': 'Loading' },
       els.loadArt, h('div.sr-loading-shade'),
@@ -1991,7 +2006,7 @@ export class MenuUI {
         h('div.sr-loading-info', els.loadKicker, els.loadTitle, els.loadDesc, els.loadFacts,
           h('div.sr-loading-progress',
             h('div.sr-loading-status', h('span.sr-loading-status-text', h('span.sr-chevrons', h('i'), h('i'), h('i')), els.loadStatus), els.loadPct),
-            h('div.sr-loading-bar', els.loadBar, h('b')))),
+            h('div.sr-loading-bar', els.loadBar))),
         h('div.sr-loading-tip.sr-panel', h('span.sr-kicker', 'Field tip'), els.loadTip)));
     this.el.append(els.loading);
   }

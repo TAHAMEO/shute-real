@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weapon Models Preview</title>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #6f747a; font-family: sans-serif; }
+  canvas { display: block; }
+  #labels { position: absolute; inset: 0; pointer-events: none; }
+  .lbl { position: absolute; color: #fff; font: 600 11px/1.2 sans-serif; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+  .lbl small { font-weight: 400; opacity: 0.8; }
+  #xh { position: absolute; inset: 0; pointer-events: none; display: none; }
+  #xh .h { position: absolute; left: 0; right: 0; top: 50%; height: 1px; margin-top: -0.5px; background: rgba(0, 255, 60, 0.75); }
+  #xh .v { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; margin-left: -0.5px; background: rgba(0, 255, 60, 0.75); }
+  #hud { position: absolute; left: 8px; bottom: 6px; color: #fff; font: 12px monospace; text-shadow: 0 1px 2px #000; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="labels"></div>
+<div id="xh"><div class="h"></div><div class="v"></div></div>
+<div id="hud"></div>
+<script type="module" src="./weapons-preview.js"></script>
+</body>
+</html>

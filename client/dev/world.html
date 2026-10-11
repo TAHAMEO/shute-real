@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><title>World preview</title>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}#info{position:fixed;left:6px;top:4px;color:#fff;font:12px monospace;text-shadow:0 0 2px #000}</style></head><body>
+<canvas id="c"></canvas><div id="info"></div>
+<script type="module">
+import * as THREE from 'three';
+import { World } from '/shared/world.js';
+import { RenderSystem } from '/js/engine/renderer.js';
+import { WorldView } from '/js/world/world-view.js';
+import { GRAPHICS_PRESETS } from '/js/settings.js';
+const P = new URLSearchParams(location.search);
+const mapId = P.get('map') || 'valley';
+const preset = P.get('q') || 'high';
+const t0 = performance.now();
+const world = new World(mapId);
+const tWorld = performance.now() - t0;
+const rs = new RenderSystem(document.getElementById('c'));
+const g = { ...GRAPHICS_PRESETS[preset], vegetation: P.get('veg') !== '0' };
+if (P.get('ao') === '0') g.ao = false;
+if (P.get('rays') === '0') g.godrays = false;
+rs.setQuality({ renderScale: g.renderScale, ao: g.ao, bloom: g.bloom, antialias: g.antialias, godrays: g.godrays, shadows: g.shadows, pixelRatio: 1 });
+rs.setSize(innerWidth, innerHeight);
+const view = new WorldView(rs, world);
+await view.build((p, t) => console.log('build', p.toFixed(2), t), g);
+// Camera placement.
+let x = 0, z = 0;
+const poi = P.get('poi');
+if (poi) { const p = world.pois.find(q => q.name.toLowerCase().startsWith(poi.toLowerCase())) || world.pois[0]; x = p.x; z = p.z; }
+if (P.get('x')) x = Number(P.get('x'));
+if (P.get('z')) z = Number(P.get('z'));
+const back = Number(P.get('back') || 0);
+const yaw = Number(P.get('yaw') || 0) * Math.PI / 180;
+x -= -Math.sin(yaw) * back; z -= -Math.cos(yaw) * back;
+const h = Number(P.get('h') || 1.7);
+const y = world.collision.groundHeight(x, z, 1e4, 0.3) + h;
+rs.camera.position.set(x, y, z);
+rs.camera.rotation.set(Number(P.get('pitch') || 0) * Math.PI / 180, yaw, 0, 'YXZ');
+rs.camera.fov = Number(P.get('fov') || 75); rs.camera.updateProjectionMatrix();
+const frames = Number(P.get('frames') || 2);
+for (let i = 0; i < frames; i++) { view.update(1 / 30, rs.camera); rs.render(1 / 30); }
+const info = `${mapId} world ${tWorld.toFixed(0)}ms total ${(performance.now() - t0).toFixed(0)}ms calls ${rs.stats.calls} tris ${rs.stats.triangles} gpu ${rs.gpuName}`;
+console.log(info);
+if (P.get('info') !== '0') document.getElementById('info').textContent = info;
+window.__READY = true;
+</script></body></html>

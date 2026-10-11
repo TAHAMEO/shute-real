@@ -2,7 +2,7 @@
 // bipods, magazines and small details. All functions take a Builder and gun-space coords.
 import * as THREE from 'three';
 import { getMaterial, RETICLE_FEATURE } from '../weapon-materials.js';
-import { extrudeSection, mtx, prep, circlePts } from './geo-shim.js';
+import { extrudeSection, mtx, prep, circlePts } from '../weapon-parts.js';
 
 export const MOA = Math.PI / (180 * 60);
 
@@ -46,7 +46,7 @@ export function rail(b, mat, f0, f1, y, o = {}) {
   }
   const base = [[-RS, 0], [RS, 0], [RS, 0.0035], [RW, 0.0065], [-RW, 0.0065], [-RS, 0.0035]];
   b.section(mat, base, f0, f1, { x, y, pre, tint: 0.55, bevel: 0.0004 });
-  const tooth = extrudeSection([[-RW, 0.0065], [RW, 0.0065], [RS, RAIL_H], [-RS, RAIL_H]], TOOTH, b.q, { bevel: 0.00035 });
+  const tooth = extrudeSection([[-RW, 0.0065], [RW, 0.0065], [RS, RAIL_H], [-RS, RAIL_H]], TOOTH, b.q, { bevel: 0.0003, bevelSeg: 1 });
   const n = Math.max(1, Math.floor((len - TOOTH) / PITCH) + 1);
   const start = f0 + (len - ((n - 1) * PITCH + TOOTH)) / 2;
   for (let i = 0; i < n; i++) {
@@ -61,7 +61,7 @@ export function rail(b, mat, f0, f1, y, o = {}) {
 // ------------------------------------------------------------------ flip-up iron sights
 
 /** Rear flip-up aperture sight. f = leaf position, railTop = rail top height, sightY = aperture centre. */
-export function buisRear(b, mat, f, railTop, sightY, up = true) {
+export function buisRear(b, mat, f, railTop, sightY, up = true, o = {}) {
   const baseTop = railTop + 0.0075;
   b.rbox(mat, 0, railTop + 0.0035, f - 0.004, 0.019, 0.008, 0.028, 0.0015);
   if (b.fp) {
@@ -71,8 +71,9 @@ export function buisRear(b, mat, f, railTop, sightY, up = true) {
   }
   const y0 = baseTop - 0.002;
   const top = sightY + 0.0062;
-  const outline = [[-0.0082, y0], [0.0082, y0], [0.0082, sightY + 0.002, 0.002], [0.0058, top, 0.002], [-0.0058, top, 0.002], [-0.0082, sightY + 0.002, 0.002]];
-  const hole = circlePts(0, sightY, 0.0021, 0.0021, b.fp ? 16 : 8).reverse();
+  let outline = [[-0.0082, y0], [0.0082, y0], [0.0082, sightY + 0.002, 0.002], [0.0058, top, 0.002], [-0.0058, top, 0.002], [-0.0082, sightY + 0.002, 0.002]];
+  if (o.style === 'drum') outline = ringStem(0, sightY, 0.0078, 0.0050, y0, b.fp ? 20 : 8);
+  const hole = circlePts(0, sightY, o.aperture || 0.0021, o.aperture || 0.0021, b.fp ? 16 : 8).reverse();
   const g = extrudeSection(outline, 0.0032, b.q, { holes: [hole], bevel: 0.0004 });
   const pv = up ? null : pivotX(y0 + 0.001, f, Math.PI / 2);
   let m = mtx(0, 0, f - 0.0016);
@@ -92,15 +93,44 @@ export function buisFront(b, mat, f, railTop, sightY, up = true, o = {}) {
   const ear = sightY + (o.ear ?? 0.0065);
   const win = sightY - 0.0065;
   const pw = 0.0008;
-  const outline = [
+  let outline = [
     [-0.0085, y0], [0.0085, y0], [0.0085, ear, 0.0015], [0.0060, ear, 0.001], [0.0060, win, 0.0015],
     [pw, win, 0.0008], [pw, sightY - 0.0006], [pw * 0.6, sightY], [-pw * 0.6, sightY], [-pw, sightY - 0.0006],
     [-pw, win, 0.0008], [-0.0060, win, 0.0015], [-0.0060, ear, 0.001], [-0.0085, ear, 0.0015],
   ];
-  const g = extrudeSection(outline, 0.0035, b.q, { bevel: 0.0003 });
+  let holes;
+  if (o.style === 'hood') {
+    const cy = sightY - 0.0012;
+    const ri = 0.0068;
+    outline = ringStem(0, cy, 0.0088, 0.0045, y0, b.fp ? 22 : 10);
+    const a1 = Math.asin(pw / ri);
+    const yb = cy - Math.sqrt(ri * ri - pw * pw);
+    const hp = [];
+    const n = b.fp ? 18 : 8;
+    for (let i = 0; i <= n; i++) {
+      const a = -Math.PI / 2 + a1 + (i / n) * (Math.PI * 2 - 2 * a1);
+      hp.push([Math.cos(a) * ri, cy + Math.sin(a) * ri]);
+    }
+    hp.push([-pw, yb], [-pw, sightY - 0.0006], [-pw * 0.6, sightY], [pw * 0.6, sightY], [pw, sightY - 0.0006], [pw, yb]);
+    holes = [hp];
+  }
+  const g = extrudeSection(outline, 0.0035, b.q, { bevel: 0.0003, holes });
   let m = mtx(0, 0, f - 0.00175);
   if (!up) m = pivotX(y0 + 0.001, f, -Math.PI / 2).multiply(m);
   b.geo(mat, g, m);
+}
+
+/** Outline of a ring (radius ro around (cx, cy)) sitting on a stem of half width sw from y0. */
+function ringStem(cx, cy, ro, sw, y0, n) {
+  const phi = Math.acos(Math.min(0.999, sw / ro));
+  const yj = cy - Math.sqrt(Math.max(0, ro * ro - sw * sw));
+  const pts = [[cx - sw, y0], [cx + sw, y0], [cx + sw, yj]];
+  for (let i = 1; i < n; i++) {
+    const a = -phi + (i / n) * (Math.PI + 2 * phi);
+    pts.push([cx + Math.cos(a) * ro, cy + Math.sin(a) * ro]);
+  }
+  pts.push([cx - sw, yj]);
+  return pts;
 }
 
 // ------------------------------------------------------------------ small details
@@ -284,19 +314,20 @@ export function muzzle(b, type, f, rb, o = {}) {
     } else if (style === 'pistol' || style === 'none') {
       bore(f, rb * 0.55);
     } else {
-      // A2 birdcage (or 3-prong for 'scar')
-      const L = style === 'scar' ? 0.058 : 0.054;
-      const R = style === 'scar' ? 0.0112 : 0.0112;
+      // A2 birdcage, or open prong hiders ('scar' = 3 prongs, 'prong4' = 4 prongs)
+      const prong = style === 'scar' || style === 'prong4';
+      const L = prong ? 0.058 : 0.054;
+      const R = 0.0112;
       if (!fp) {
         b.tube(mat, R, f, f + L, { x, y, seg });
       } else {
         b.lathe(mat, [[0, f], [R - 0.0012, f], [R, f + 0.0015], [R, f + 0.013], [0.0085, f + 0.0145], [0, f + 0.0145]], { x, y, seg });
         b.tube(mat, 0.0079, f + 0.013, f + L - 0.003, { x, y, seg: 12, tint: 0.12 });
-        const bars = style === 'scar' ? [0, 2.094, 4.189] : [0, 1.0, 2.1, 4.18, 5.28];
+        const bars = style === 'scar' ? [0, 2.094, 4.189] : style === 'prong4' ? [0.785, 2.356, 3.927, 5.498] : [0, 1.0, 2.1, 4.18, 5.28];
         for (const a of bars) {
-          b.box(mat, x + Math.sin(a) * 0.0096, y + Math.cos(a) * 0.0096, f + 0.0145 + (L - 0.0145) / 2, style === 'scar' ? 0.0055 : 0.0042, 0.0031, L - 0.0145, { rz: -a });
+          b.box(mat, x + Math.sin(a) * 0.0096, y + Math.cos(a) * 0.0096, f + 0.0145 + (L - 0.0145) / 2, prong ? 0.0055 : 0.0042, 0.0031, L - 0.0145, { rz: -a });
         }
-        if (style !== 'scar') {
+        if (!prong) {
           b.box(mat, x, y - 0.0094, f + 0.0145 + (L - 0.0145 - 0.008) / 2, 0.0085, 0.0034, L - 0.0145 - 0.008);
           b.lathe(mat, [[0.0079, f + L - 0.008], [R, f + L - 0.008], [R, f + L - 0.0012], [R - 0.0012, f + L], [0.0079, f + L], [0.0079, f + L - 0.008]], { x, y, seg });
         }
@@ -617,3 +648,28 @@ export function ironSight(b, sightY, rearF, relief = 0.08, x = 0) {
   b.root.meta.sightY = sightY;
   b.root.meta.lensRadius = 0;
 }
+
+// ------------------------------------------------------------------ grips
+
+/**
+ * Pistol-grip side outline along an axis starting at top centre (f, y), tilted `deg` back from
+ * vertical, length L. front(s) / back(s) return half-depths at distance s down the axis.
+ * Returns { pts, point(s) -> [f, y] on the axis }.
+ */
+export function gripOutline(f, y, deg, L, front, back, n = 10, bottomR = 0.007) {
+  const a = (deg * Math.PI) / 180;
+  const dx = -Math.sin(a); const dy = -Math.cos(a);
+  const px = Math.cos(a); const py = -Math.sin(a);
+  const F = []; const B = [];
+  for (let i = 0; i <= n; i++) {
+    const s = (L * i) / n;
+    F.push([f + dx * s + px * front(s), y + dy * s + py * front(s)]);
+    B.push([f + dx * s - px * back(s), y + dy * s - py * back(s)]);
+  }
+  F[n][2] = bottomR;
+  B[n][2] = bottomR;
+  return { pts: [...F, ...B.reverse()], point: (s) => [f + dx * s, y + dy * s], dir: [dx, dy], perp: [px, py] };
+}
+
+/** Smooth bump helper for grip profiles: amplitude a at s0 with width w. */
+export const bump = (s, s0, w, a) => a * Math.exp(-((s - s0) * (s - s0)) / (w * w));

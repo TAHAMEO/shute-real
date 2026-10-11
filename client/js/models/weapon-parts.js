@@ -145,7 +145,7 @@ export function creaseNormals(geo, angle) {
 }
 
 /** Strip to position/normal, make non-indexed, add colour (edge wear along `axis`). */
-function prep(geo, q, { axis = -1, wear = 1, crease = true, creaseAngle } = {}) {
+export function prep(geo, q, { axis = -1, wear = 1, crease = true, creaseAngle } = {}) {
   let g = geo.index ? geo.toNonIndexed() : geo;
   for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
   if (crease) creaseNormals(g, creaseAngle ?? q.crease);
@@ -195,7 +195,7 @@ export function extrudeSide(pts, width, q, o = {}) {
   const bv = q.fp ? Math.min(want, width * 0.22) : 0;
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: width - 2 * bv, bevelEnabled: bv > 0, bevelThickness: bv, bevelSize: bv, bevelOffset: -bv,
-    bevelSegments: q.bevelSeg, curveSegments: 4, steps: 1,
+    bevelSegments: o.bevelSeg || q.bevelSeg, curveSegments: 4, steps: 1,
   });
   geo.translate(0, 0, -(width / 2 - bv));
   geo.rotateY(Math.PI / 2);
@@ -210,7 +210,7 @@ export function extrudeSection(pts, len, q, o = {}) {
   const bv = q.fp ? Math.min(want, len * 0.22) : 0;
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: len - 2 * bv, bevelEnabled: bv > 0, bevelThickness: bv, bevelSize: bv, bevelOffset: -bv,
-    bevelSegments: q.bevelSeg, curveSegments: 4, steps: 1,
+    bevelSegments: o.bevelSeg || q.bevelSeg, curveSegments: 4, steps: 1,
   });
   geo.translate(0, 0, -(len - bv));
   return prep(geo, q, { axis: 2, wear: o.wear ?? 1, creaseAngle: o.crease });
@@ -224,7 +224,7 @@ export function cylZ(r0, r1, len, segs, q, o = {}) {
   return prep(geo, q, { creaseAngle: o.crease ?? (segs <= 8 ? 0.9 : q.crease) });
 }
 
-/** Lathe around the bore direction: pts = [[r, f], ...] ordered front-to-back for outward faces. */
+/** Lathe around the bore direction: pts = [[r, f], ...] ordered rear-to-front (increasing f) for outward faces. */
 export function latheZ(pts, segs, q, o = {}) {
   const geo = new THREE.LatheGeometry(pts.map((p) => _v2(Math.max(p[0], 0), p[1])), segs, o.phiStart || 0, o.phiLength || Math.PI * 2);
   geo.rotateX(-Math.PI / 2);
@@ -310,7 +310,7 @@ export class Builder {
     const [r0, r1] = Array.isArray(r) ? r : [r, r];
     const segs = o.seg || this.q.seg;
     const g = cylZ(r0, r1, f1 - f0, segs, this.q, o);
-    let m = mtx(o.x || 0, o.y || 0, f0, 0, 0, o.roll || 0);
+    let m = mtx(o.x || 0, o.y || 0, f0, o.rx || 0, o.ry || 0, o.roll || 0);
     if (o.pre) m = o.pre.clone().multiply(m);
     return this.geo(mat, g, m, o);
   }

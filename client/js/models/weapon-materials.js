@@ -111,16 +111,16 @@ function buildTextures() {
   const n2 = fbm(S, S, 16, 16, 3, 23);
   const rough = new Uint8Array(S * S * 4);
   const g = new Float32Array(S * S);
-  for (let i = 0; i < S * S; i++) g[i] = 0.82 + 0.5 * (n1[i] - 0.5) + 0.22 * (n2[i] - 0.5);
+  for (let i = 0; i < S * S; i++) g[i] = 0.86 + 0.26 * (n1[i] - 0.5) + 0.1 * (n2[i] - 0.5);
   const r = rng(77);
-  for (let k = 0; k < 70; k++) {
+  for (let k = 0; k < 28; k++) {
     let x = r() * S;
     let y = r() * S;
     const ang = r() * Math.PI;
     const len = 10 + r() * 70;
     const dx = Math.cos(ang);
     const dy = Math.sin(ang);
-    const depth = 0.12 + r() * 0.2;
+    const depth = 0.03 + r() * 0.05;
     for (let s = 0; s < len; s++) {
       const ix = ((Math.floor(x) % S) + S) % S;
       const iy = ((Math.floor(y) % S) + S) % S;
@@ -138,11 +138,11 @@ function buildTextures() {
 
   // Bead-blast / parkerized micro surface.
   const hm = fbm(S, S, 32, 32, 3, 31, 0.55);
-  const metalN = normalFromHeight(hm, S, S, 2.2);
+  const metalN = normalFromHeight(hm, S, S, 1.6);
   // Polymer stipple.
   const hp = fbm(S, S, 48, 48, 2, 41, 0.6);
   for (let i = 0; i < hp.length; i++) hp[i] = Math.pow(hp[i], 1.6);
-  const polyN = normalFromHeight(hp, S, S, 3.0);
+  const polyN = normalFromHeight(hp, S, S, 2.0);
 
   // Checkering (diamond knurl), tileable.
   const K = 128;
@@ -189,9 +189,9 @@ function buildTextures() {
   const woodN = normalFromHeight(woodH, WW, WH, 0.9);
 
   TEX = {
-    rough: dataTex(rough, S, S, { repeat: 0.5 }),
-    metalN: dataTex(metalN, S, S, { repeat: 0.5 }),
-    polyN: dataTex(polyN, S, S, { repeat: 1 }),
+    rough: dataTex(rough, S, S, { repeat: 0.3 }),
+    metalN: dataTex(metalN, S, S, { repeat: 2.5 }),
+    polyN: dataTex(polyN, S, S, { repeat: 3 }),
     knurlN: dataTex(knurlN, K, K, { repeat: 5 }),
     wood: dataTex(wood, WW, WH, { srgb: true, repeat: 0.35 }),
     woodN: dataTex(woodN, WW, WH, { repeat: 0.35 }),
@@ -333,26 +333,26 @@ function std(o) {
 
 const DEFS = {
   // anodised aluminium (AR receivers, rails, mounts)
-  anodized: { color: '#2b2c2f', metalness: 0.55, roughness: 0.58, rough: true, normal: 'metalN', ns: 0.22 },
+  anodized: { color: '#2e3033', metalness: 0.6, roughness: 0.52, rough: true, normal: 'metalN', ns: 0.05 },
   // parkerized / phosphated steel
-  metal: { color: '#2d2e30', metalness: 0.75, roughness: 0.5, rough: true, normal: 'metalN', ns: 0.35 },
+  metal: { color: '#2f3031', metalness: 0.75, roughness: 0.48, rough: true, normal: 'metalN', ns: 0.07 },
   // blued / nitrided barrels, slides
-  blued: { color: '#1e1f22', metalness: 0.85, roughness: 0.4, rough: true, normal: 'metalN', ns: 0.18 },
+  blued: { color: '#202124', metalness: 0.85, roughness: 0.38, rough: true, normal: 'metalN', ns: 0.04 },
   // bright machined steel: bolts, cylinder faces, pins
   steel: { color: '#9fa2a6', metalness: 1.0, roughness: 0.3, rough: true },
   // stainless (revolver, Desert Eagle option)
-  stainless: { color: '#b4b6b9', metalness: 1.0, roughness: 0.36, rough: true, normal: 'metalN', ns: 0.12 },
-  polymer: { color: '#1e1f20', metalness: 0.0, roughness: 0.7, normal: 'polyN', ns: 0.45 },
-  polymerCheck: { color: '#1c1c1d', metalness: 0.0, roughness: 0.75, normal: 'knurlN', ns: 0.9 },
-  tan: { color: '#9f8664', metalness: 0.0, roughness: 0.72, normal: 'polyN', ns: 0.45 },
-  tanMetal: { color: '#97805f', metalness: 0.3, roughness: 0.6, rough: true, normal: 'metalN', ns: 0.25 },
-  od: { color: '#4b5137', metalness: 0.0, roughness: 0.72, normal: 'polyN', ns: 0.45 },
-  green: { color: '#3a4632', metalness: 0.0, roughness: 0.62, normal: 'polyN', ns: 0.4 },
-  plum: { color: '#5c2b1f', metalness: 0.0, roughness: 0.45, normal: 'polyN', ns: 0.25 },
-  wood: { color: '#ffffff', metalness: 0.0, roughness: 0.48, map: 'wood', normal: 'woodN', ns: 0.35 },
-  woodRed: { color: '#ffb59a', metalness: 0.0, roughness: 0.42, map: 'wood', normal: 'woodN', ns: 0.3 },
-  woodCheck: { color: '#f2d0b8', metalness: 0.0, roughness: 0.55, map: 'wood', normal: 'knurlN', ns: 0.8 },
-  rubber: { color: '#161616', metalness: 0.0, roughness: 0.92, normal: 'polyN', ns: 0.6 },
+  stainless: { color: '#b4b6b9', metalness: 1.0, roughness: 0.34, rough: true, normal: 'metalN', ns: 0.04 },
+  polymer: { color: '#1f2021', metalness: 0.0, roughness: 0.66, normal: 'polyN', ns: 0.1 },
+  polymerCheck: { color: '#1d1d1e', metalness: 0.0, roughness: 0.72, normal: 'knurlN', ns: 0.45 },
+  tan: { color: '#86704f', metalness: 0.0, roughness: 0.7, normal: 'polyN', ns: 0.1 },
+  tanMetal: { color: '#7f6a4c', metalness: 0.3, roughness: 0.58, rough: true, normal: 'metalN', ns: 0.05 },
+  od: { color: '#4b5137', metalness: 0.0, roughness: 0.7, normal: 'polyN', ns: 0.1 },
+  green: { color: '#3a4632', metalness: 0.0, roughness: 0.6, normal: 'polyN', ns: 0.1 },
+  plum: { color: '#5c2b1f', metalness: 0.0, roughness: 0.45, normal: 'polyN', ns: 0.06 },
+  wood: { color: '#ffffff', metalness: 0.0, roughness: 0.48, map: 'wood', normal: 'woodN', ns: 0.12 },
+  woodRed: { color: '#ffb59a', metalness: 0.0, roughness: 0.42, map: 'wood', normal: 'woodN', ns: 0.1 },
+  woodCheck: { color: '#f2d0b8', metalness: 0.0, roughness: 0.55, map: 'wood', normal: 'knurlN', ns: 0.45 },
+  rubber: { color: '#171717', metalness: 0.0, roughness: 0.9, normal: 'polyN', ns: 0.15 },
   brass: { color: '#c39a4c', metalness: 1.0, roughness: 0.3, rough: true },
   paint: { color: '#e9e5d6', metalness: 0.0, roughness: 0.6 },
   glass: { color: '#8fc0c4', metalness: 0.0, roughness: 0.04, transparent: true, opacity: 0.14 },

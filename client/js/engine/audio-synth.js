@@ -8,6 +8,7 @@
 // never blocks for more than a few milliseconds at a time.
 
 const TAU = Math.PI * 2;
+const DENORM = 1e-20;
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 export const dbToGain = (db) => Math.pow(10, db / 20);
@@ -84,10 +85,12 @@ export function coefs(type, f, q, sr, gainDb = 0) {
 
 /** Static biquad, in place. */
 export function biquad(x, type, f, q, sr, gainDb = 0) {
-  const [b0, b1, b2, a1, a2] = coefs(type, f, q, sr, gainDb);
+  const c = coefs(type, f, q, sr, gainDb);
+  const b0 = c[0]; const b1 = c[1]; const b2 = c[2]; const a1 = c[3]; const a2 = c[4];
   let x1 = 0; let x2 = 0; let y1 = 0; let y2 = 0;
-  for (let i = 0; i < x.length; i++) {
-    const xi = x[i];
+  const n = x.length;
+  for (let i = 0; i < n; i++) {
+    const xi = x[i] + DENORM; // tiny offset keeps the recursion out of (very slow) denormal range
     const y = b0 * xi + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
     x2 = x1; x1 = xi; y2 = y1; y1 = y;
     x[i] = y;
@@ -101,7 +104,7 @@ export function biquadSweep(x, type, fAt, q, sr) {
   const n = x.length;
   for (let i = 0; i < n; i++) {
     if ((i & 31) === 0) c = coefs(type, fAt(i / n), q, sr);
-    const xi = x[i];
+    const xi = x[i] + DENORM;
     const y = c[0] * xi + c[1] * x1 + c[2] * x2 - c[3] * y1 - c[4] * y2;
     x2 = x1; x1 = xi; y2 = y1; y1 = y;
     x[i] = y;
@@ -152,7 +155,7 @@ export class Synth {
     for (let i = i0; i < x.length; i++) {
       const n = i - i0;
       if (n < a) x[i] *= n / a;
-      else if (n >= a + h) { x[i] *= g; g *= k; }
+      else if (n >= a + h) { x[i] *= g; g *= k; if (g < 1e-9) g = 0; }
     }
     return x;
   }
@@ -184,16 +187,18 @@ export class Synth {
   sweep(x, t0, { f0, f1, drop = 0.04, attack = 0.001, decay = 0.08, amp = 1, drive = 0 }) {
     const sr = this.sr; const i0 = this.idx(t0);
     const n = Math.min(x.length - i0, Math.ceil((attack + decay * 8) * sr));
-    const k = Math.exp(-1 / Math.max(1, decay * sr)); const kd = Math.exp(-1 / Math.max(1, drop * sr));
-    const na = attack * sr; const norm = drive ? Math.tanh(drive) : 1;
-    let ph = 0; let g = 1; let fd = f0 - f1;
+    if (n <= 0) return x;
+    const k = Math.exp(-1 / Math.max(1, decay * sr)); const kd = Math.exp(-16 / Math.max(1, drop * sr));
+    const na = Math.max(1, attack * sr); const norm = drive ? 1 / tanhA(drive) : 1;
+    // phasor rotation; the rotation step (frequency) is refreshed every 16 samples
+    let re = 1; let im = 0; let cw = 1; let sw = 0; let g = 1; let fd = f0 - f1;
     for (let i = 0; i < n; i++) {
-      ph += (TAU * (f1 + fd)) / sr; fd *= kd;
-      let s = Math.sin(ph);
-      if (drive) s = Math.tanh(drive * s) / norm;
+      if ((i & 15) === 0) { const w = (TAU * (f1 + fd)) / sr; cw = Math.cos(w); sw = Math.sin(w); fd *= kd; }
+      const t = re * cw - im * sw; im = re * sw + im * cw; re = t;
+      const v = drive ? tanhA(drive * im) * norm : im;
       let e;
       if (i < na) e = i / na; else { e = g; g *= k; }
-      x[i0 + i] += amp * s * e;
+      x[i0 + i] += amp * v * e;
     }
     return x;
   }
@@ -242,10 +247,11 @@ export class Synth {
 
   /** Smooth random modulation signal in -1..1 (cosine-interpolated random points at rate Hz). */
   smooth(n, rate) {
-    const out = new Float32Array(n); const step = Math.max(1, this.sr / rate);
+    const out = new Float32Array(n); const step = Math.max(1, this.sr / rate); const inv = 1 / step;
     let a = this.rng.bi(); let b = this.rng.bi(); let pos = 0;
     for (let i = 0; i < n; i++) {
-      out[i] = a + (b - a) * (0.5 - 0.5 * Math.cos((Math.PI * pos) / step));
+      const u = pos * inv;
+      out[i] = a + (b - a) * u * u * (3 - 2 * u);
       if (++pos >= step) { pos -= step; a = b; b = this.rng.bi(); }
     }
     return out;
@@ -358,6 +364,14 @@ export class Synth {
   }
 }
 
+/** Fast tanh (Pade 3/2), exact enough for saturation curves; clamps beyond +-3. */
+function tanhA(x) {
+  if (x > 3) return 1;
+  if (x < -3) return -1;
+  const x2 = x * x;
+  return (x * (27 + x2)) / (27 + 9 * x2);
+}
+
 const METAL_RATIOS = [1, 1.52, 2.07, 2.74, 3.43, 4.18, 5.03, 6.11];
 const PLATE_RATIOS = [1, 1.59, 2.14, 2.3, 2.65, 2.92, 3.16, 3.5, 3.9, 4.36];
 const BRASS_RATIOS = [1, 2.32, 2.95, 4.1, 5.06];
@@ -382,16 +396,21 @@ export function makeSeamless(x, xfade) {
 
 // ------------------------------------------------------------------------------ impulse responses
 
-/** Adds a short smeared reflection (impulse + a few ms of low-passed decaying noise). */
-function smearTap(h, sr, rng, t, amp, smear, lpHz) {
+/**
+ * Adds a smeared reflection: optional direct spike (bright, early reflections only) plus
+ * low-passed decaying noise with a soft onset of `rise` seconds.
+ */
+function smearTap(h, sr, rng, t, amp, smear, lpHz, spike = 0.6, rise = 0) {
   const i0 = Math.round(t * sr); if (i0 >= h.length) return;
-  const n = Math.max(2, Math.ceil(smear * 6 * sr)); const k = Math.exp(-1 / Math.max(1, smear * sr));
-  const a = Math.exp((-TAU * lpHz) / sr);
-  let g = amp; let s = 0;
-  h[i0] += amp * 0.6;
+  const n = Math.max(2, Math.ceil((smear * 6 + rise) * sr)); const k = Math.exp(-1 / Math.max(1, smear * sr));
+  const a = Math.exp((-TAU * lpHz) / sr); const nr = rise * sr;
+  let g = amp; let s1 = 0; let s2 = 0;
+  if (spike) h[i0] += amp * spike;
   for (let i = 0; i < n && i0 + i < h.length; i++) {
-    s = s * a + (1 - a) * rng.bi() * 3;
-    h[i0 + i] += s * g * 0.5; g *= k;
+    s1 = s1 * a + (1 - a) * rng.bi() * 3; s2 = s2 * a + (1 - a) * s1; // 2-pole low-pass
+    const e = i < nr ? 0.5 - 0.5 * Math.cos((Math.PI * i) / nr) : g;
+    if (i >= nr) g *= k;
+    h[i0 + i] += (spike ? s1 : s2 * 1.6) * e * 0.5;
   }
 }
 
@@ -403,7 +422,7 @@ function diffuseTail(h, sr, rng, { start, build, rt60, amp, fHi, fLo, fTau, hp =
   for (let i = i0; i < h.length; i++) {
     const t = (i - i0) / sr;
     if (((i - i0) & 63) === 0) a = Math.exp((-TAU * (fLo + (fHi - fLo) * Math.exp(-t / fTau))) / sr);
-    lp = lp * a + (1 - a) * rng.bi();
+    lp = lp * a + (1 - a) * rng.bi() + DENORM;
     hpOut = hpA * (hpOut + lp - hpPrev); hpPrev = lp; // one-pole high-pass
     h[i] += hpOut * g * (1 - Math.exp(-t / build)) * 2.2;
     g *= kd;
@@ -418,40 +437,47 @@ function normEnergy(chans, e = 1) {
   return chans;
 }
 
+/** One channel of the outdoor impulse response (see outdoorIR). */
+export function outdoorIRChannel(sr, rng, c, { dur = 2.6, rt60 = 2.4 } = {}) {
+  const h = new Float32Array(Math.ceil(dur * sr));
+  const taps = [0.011, 0.017, 0.024, 0.033, 0.045, 0.058, 0.074, 0.093, 0.117, 0.146, 0.18];
+  taps.forEach((t, k) => {
+    const tt = t * rng.range(0.85, 1.18) + c * rng.range(0.0005, 0.0025);
+    const amp = 0.5 * Math.pow(0.84, k) * rng.range(0.6, 1.2) * (rng.f() < 0.3 ? -1 : 1);
+    smearTap(h, sr, rng, tt, amp, 0.0004 + k * 0.0003, 9000 - k * 600);
+  });
+  // dull, smeared slap-backs from tree lines / terrain
+  [[0.27, 0.065], [0.44, 0.05], [0.71, 0.04], [1.08, 0.028], [1.55, 0.018]].forEach(([t, a], k) => {
+    smearTap(h, sr, rng, t * rng.range(0.9, 1.12) + c * 0.004, a * rng.range(0.7, 1.2), 0.03 + k * 0.018, 1700 - k * 250, 0, 0.012 + k * 0.006);
+  });
+  diffuseTail(h, sr, rng, { start: 0.008, build: 0.07, rt60: rt60 * rng.range(0.95, 1.05), amp: 0.16, fHi: 5200, fLo: 420, fTau: 0.38 });
+  return normEnergy([h], 1)[0];
+}
+
 /**
  * Outdoor impulse response (stereo): sparse early reflections (ground/trees), a few slap-back
  * echoes from terrain and a long diffuse tail whose highs decay first. Energy-normalised.
  */
-export function outdoorIR(sr, rng, { dur = 2.6, rt60 = 2.4 } = {}) {
-  const n = Math.ceil(dur * sr); const chans = [new Float32Array(n), new Float32Array(n)];
-  const taps = [0.011, 0.017, 0.024, 0.033, 0.045, 0.058, 0.074, 0.093, 0.117, 0.146, 0.18];
-  chans.forEach((h, c) => {
-    taps.forEach((t, k) => {
-      const tt = t * rng.range(0.85, 1.18) + c * rng.range(0.0005, 0.0025);
-      const amp = 0.5 * Math.pow(0.84, k) * rng.range(0.6, 1.2) * (rng.f() < 0.3 ? -1 : 1);
-      smearTap(h, sr, rng, tt, amp, 0.0004 + k * 0.0003, 9000 - k * 600);
-    });
-    [[0.27, 0.22], [0.44, 0.16], [0.71, 0.12], [1.08, 0.08], [1.55, 0.05]].forEach(([t, a], k) => {
-      smearTap(h, sr, rng, t * rng.range(0.9, 1.12) + c * 0.004, a * rng.range(0.7, 1.2), 0.012 + k * 0.01, 2600 - k * 380);
-    });
-    diffuseTail(h, sr, rng, { start: 0.008, build: 0.07, rt60: rt60 * rng.range(0.95, 1.05), amp: 0.16, fHi: 7000, fLo: 450, fTau: 0.5 });
-  });
-  return normEnergy(chans, 1);
+export function outdoorIR(sr, rng, opts = {}) {
+  return [outdoorIRChannel(sr, rng, 0, opts), outdoorIRChannel(sr, rng, 1, opts)];
+}
+
+/** One channel of the indoor impulse response (see indoorIR). */
+export function indoorIRChannel(sr, rng, c, { dur = 1.1, rt60 = 0.8 } = {}) {
+  const h = new Float32Array(Math.ceil(dur * sr));
+  for (let k = 0; k < 26; k++) {
+    const t = 0.0015 + Math.pow(k / 26, 1.4) * 0.045 * rng.range(0.85, 1.15) + c * 0.0007;
+    smearTap(h, sr, rng, t, 0.55 * Math.pow(0.9, k) * (rng.f() < 0.4 ? -1 : 1), 0.0003 + k * 0.0001, 11000 - k * 200);
+  }
+  diffuseTail(h, sr, rng, { start: 0.003, build: 0.012, rt60, amp: 0.3, fHi: 9000, fLo: 1400, fTau: 0.3, hp: 90 });
+  const s = new Synth(sr, rng);
+  [118, 176, 233, 301].forEach((f) => s.mode(h, 0.004, f * rng.range(0.95, 1.05), 0.09, 0.012, rng.f() * TAU));
+  return normEnergy([h], 1)[0];
 }
 
 /** Indoor impulse response (stereo): dense early reflections, short bright room tail, boxy modes. */
-export function indoorIR(sr, rng, { dur = 1.1, rt60 = 0.8 } = {}) {
-  const n = Math.ceil(dur * sr); const chans = [new Float32Array(n), new Float32Array(n)];
-  chans.forEach((h, c) => {
-    for (let k = 0; k < 26; k++) {
-      const t = 0.0015 + Math.pow(k / 26, 1.4) * 0.045 * rng.range(0.85, 1.15) + c * 0.0007;
-      smearTap(h, sr, rng, t, 0.55 * Math.pow(0.9, k) * (rng.f() < 0.4 ? -1 : 1), 0.0003 + k * 0.0001, 11000 - k * 200);
-    }
-    diffuseTail(h, sr, rng, { start: 0.003, build: 0.012, rt60, amp: 0.3, fHi: 9000, fLo: 1400, fTau: 0.3, hp: 90 });
-    const s = new Synth(sr, rng);
-    [118, 176, 233, 301].forEach((f) => s.mode(h, 0.004, f * rng.range(0.95, 1.05), 0.09, 0.012, rng.f() * TAU));
-  });
-  return normEnergy(chans, 1);
+export function indoorIR(sr, rng, opts = {}) {
+  return [indoorIRChannel(sr, rng, 0, opts), indoorIRChannel(sr, rng, 1, opts)];
 }
 
 /**
@@ -465,7 +491,7 @@ export function echoIR(sr, rng, { dur = 3, rt60 = 3.2, density = 1 } = {}) {
     if (t > dur - 0.1) return;
     const tt = t * rng.range(0.88, 1.12);
     for (let m = 0; m < 2 + Math.round(density * 2); m++) {
-      smearTap(h, sr, rng, tt + m * rng.range(0.008, 0.03), a * rng.range(0.4, 1) * (m ? 0.6 : 1), 0.02 + k * 0.012, 1400 - k * 110);
+      smearTap(h, sr, rng, tt + m * rng.range(0.008, 0.03), a * rng.range(0.4, 1) * (m ? 0.6 : 1), 0.02 + k * 0.012, 1400 - k * 110, 0, 0.01 + k * 0.005);
     }
   });
   diffuseTail(h, sr, rng, { start: 0.05, build: 0.25, rt60, amp: 0.1, fHi: 900, fLo: 260, fTau: 0.8, hp: 35 });
@@ -517,7 +543,7 @@ export class Graph {
   hs(f, g) { return this.biquad('highshelf', f, 0, g); }
   gain(v = 1) { const n = this.ctx.createGain(); n.gain.value = v; return n; }
   delay(t) { const n = this.ctx.createDelay(Math.max(1, t + 0.05)); n.delayTime.value = t; return n; }
-  shaper(drive = 2) { const n = this.ctx.createWaveShaper(); n.curve = tanhCurve(drive); n.oversample = '2x'; return n; }
+  shaper(drive = 2) { const n = this.ctx.createWaveShaper(); n.curve = tanhCurve(drive); n.oversample = 'none'; return n; }
   conv(chans) { const c = this.ctx.createConvolver(); c.normalize = false; c.buffer = this.buffer(chans); return c; }
   chain(...nodes) { for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]); return nodes[nodes.length - 1]; }
   /** data -> filters -> gain(level) -> dest. Returns the gain node (connect it elsewhere too if needed). */
@@ -549,95 +575,96 @@ export class Graph {
 
 const G = (o) => Object.assign({
   T: 0.0006, crackHP: 800, crackLvl: 1, crackNoise: 0.003, crackNoiseAmt: 0.55,
-  boomF0: 120, boomF1: 52, boomDrop: 0.035, boomDecay: 0.07, boomLvl: 0.8,
-  bodyLP: 4000, bodyDecay: 0.055, bodyLvl: 0.6, brightDecay: 0.01, brightLvl: 0.45,
-  blastF: 2000, blastQ: 1, blastDecay: 0.016, blastLvl: 0.6,
-  er: 0.3, erDelay: 0.0085, drive: 2.6, lowShelf: 2,
-  mech: null, mechLvl: 0.2, loud: 0, tail: 1, supersonic: true, far: 'rifle', len: 0.55,
+  boomF0: 130, boomF1: 58, boomDrop: 0.015, boomDecay: 0.04, boomLvl: 0.6,
+  rumbleLvl: 0.45, rumbleLP: 240,
+  bodyLP: 4000, bodyDecay: 0.032, bodyLvl: 0.6, brightDecay: 0.009, brightLvl: 0.45,
+  blastF: 2000, blastQ: 1, blastDecay: 0.014, blastLvl: 0.6,
+  er: 0.3, erDelay: 0.0085, drive: 2.4, lowShelf: 2,
+  mech: null, mechLvl: 0.2, loud: 0, tail: 1, supersonic: true, far: 'rifle', len: 0.45,
 }, o);
 
 /** Gunshot synthesis parameters per weapon `sound` profile (see shared/weapons.js). */
 export const GUN_PROFILES = {
-  pistol9: G({ T: 0.00045, crackHP: 950, crackLvl: 0.9, crackNoise: 0.0025, boomF0: 155, boomF1: 66, boomDrop: 0.028,
-    boomDecay: 0.042, boomLvl: 0.55, bodyLP: 3300, bodyDecay: 0.034, bodyLvl: 0.5, brightDecay: 0.008, blastF: 1850,
-    blastQ: 1.1, blastDecay: 0.012, blastLvl: 0.6, er: 0.26, erDelay: 0.0075, drive: 2.2, mech: 'pistol', mechLvl: 0.2,
-    loud: -2.5, tail: 0.8, supersonic: false, far: 'light', len: 0.36 }),
-  pistol45: G({ T: 0.0007, crackHP: 700, crackLvl: 0.8, crackNoise: 0.003, boomF0: 122, boomF1: 52, boomDrop: 0.04,
-    boomDecay: 0.058, boomLvl: 0.78, bodyLP: 2500, bodyDecay: 0.045, bodyLvl: 0.6, brightDecay: 0.009, brightLvl: 0.35,
-    blastF: 1100, blastQ: 1, blastDecay: 0.016, blastLvl: 0.65, er: 0.28, drive: 2.4, mech: 'pistol', mechLvl: 0.21,
-    loud: -2, tail: 0.85, supersonic: false, far: 'light', len: 0.4 }),
-  pistol50: G({ T: 0.0011, crackHP: 520, crackLvl: 1, crackNoise: 0.004, boomF0: 96, boomF1: 40, boomDrop: 0.055,
-    boomDecay: 0.09, boomLvl: 0.95, bodyLP: 2300, bodyDecay: 0.07, bodyLvl: 0.75, brightDecay: 0.013, blastF: 820,
-    blastQ: 0.9, blastDecay: 0.022, blastLvl: 0.7, er: 0.32, drive: 3, mech: 'pistolHeavy', mechLvl: 0.24, loud: -0.5,
-    tail: 1.1, far: 'magnum', len: 0.55 }),
-  revolver: G({ T: 0.0009, crackHP: 620, crackLvl: 1, crackNoise: 0.006, crackNoiseAmt: 0.8, boomF0: 106, boomF1: 45,
-    boomDrop: 0.045, boomDecay: 0.075, boomLvl: 0.85, bodyLP: 2700, bodyDecay: 0.06, bodyLvl: 0.7, brightDecay: 0.012,
-    blastF: 950, blastQ: 0.9, blastDecay: 0.02, blastLvl: 0.7, er: 0.3, drive: 2.8, mech: 'revolver', mechLvl: 0.12,
-    loud: -1, tail: 1.05, far: 'magnum', len: 0.5 }),
-  smg9: G({ T: 0.00048, crackHP: 900, crackLvl: 0.9, crackNoise: 0.0026, boomF0: 142, boomF1: 60, boomDrop: 0.03,
-    boomDecay: 0.05, boomLvl: 0.62, bodyLP: 3500, bodyDecay: 0.04, bodyLvl: 0.52, brightDecay: 0.008, blastF: 1700,
-    blastQ: 1.1, blastDecay: 0.013, blastLvl: 0.62, er: 0.26, drive: 2.3, mech: 'smg', mechLvl: 0.26, loud: -2.5,
-    tail: 0.85, supersonic: false, far: 'light', len: 0.36 }),
-  smg45: G({ T: 0.00068, crackHP: 720, crackLvl: 0.82, crackNoise: 0.003, boomF0: 118, boomF1: 50, boomDrop: 0.038,
-    boomDecay: 0.062, boomLvl: 0.8, bodyLP: 2600, bodyDecay: 0.048, bodyLvl: 0.6, brightDecay: 0.009, brightLvl: 0.35,
-    blastF: 1050, blastQ: 1, blastDecay: 0.017, blastLvl: 0.66, er: 0.28, drive: 2.4, mech: 'smgHeavy', mechLvl: 0.28,
-    loud: -2, tail: 0.9, supersonic: false, far: 'light', len: 0.4 }),
-  smg46: G({ T: 0.0004, crackHP: 1250, crackLvl: 1, crackNoise: 0.0022, boomF0: 168, boomF1: 72, boomDrop: 0.026,
-    boomDecay: 0.04, boomLvl: 0.5, bodyLP: 4300, bodyDecay: 0.03, bodyLvl: 0.45, brightDecay: 0.007, brightLvl: 0.5,
-    blastF: 2600, blastQ: 1.2, blastDecay: 0.01, blastLvl: 0.65, er: 0.22, drive: 2.2, mech: 'smg', mechLvl: 0.22,
-    loud: -2.5, tail: 0.8, far: 'light', len: 0.34 }),
-  smg57: G({ T: 0.00042, crackHP: 1150, crackLvl: 1, crackNoise: 0.0023, boomF0: 158, boomF1: 68, boomDrop: 0.028,
-    boomDecay: 0.042, boomLvl: 0.52, bodyLP: 4100, bodyDecay: 0.032, bodyLvl: 0.47, brightDecay: 0.0075, brightLvl: 0.48,
-    blastF: 2300, blastQ: 1.15, blastDecay: 0.011, blastLvl: 0.64, er: 0.22, drive: 2.2, mech: 'smgBullpup',
-    mechLvl: 0.24, loud: -2.5, tail: 0.8, far: 'light', len: 0.34 }),
-  rifle556: G({ T: 0.0005, crackHP: 900, crackLvl: 1, crackNoise: 0.0028, boomF0: 126, boomF1: 55, boomDrop: 0.035,
-    boomDecay: 0.068, boomLvl: 0.8, bodyLP: 4600, bodyDecay: 0.052, bodyLvl: 0.6, brightDecay: 0.012, brightLvl: 0.5,
-    blastF: 2200, blastQ: 1, blastDecay: 0.016, blastLvl: 0.7, er: 0.3, drive: 2.8, mech: 'rifle', mechLvl: 0.2,
-    loud: -1, tail: 1, far: 'rifle', len: 0.5 }),
-  rifle545: G({ T: 0.00047, crackHP: 1000, crackLvl: 1, crackNoise: 0.0026, boomF0: 136, boomF1: 60, boomDrop: 0.032,
-    boomDecay: 0.062, boomLvl: 0.72, bodyLP: 4900, bodyDecay: 0.048, bodyLvl: 0.56, brightDecay: 0.011, brightLvl: 0.52,
-    blastF: 2500, blastQ: 1.05, blastDecay: 0.015, blastLvl: 0.68, er: 0.29, drive: 2.7, mech: 'akLight', mechLvl: 0.24,
-    loud: -1.2, tail: 1, far: 'rifle', len: 0.5 }),
-  rifle762: G({ T: 0.0007, crackHP: 720, crackLvl: 0.95, crackNoise: 0.0032, boomF0: 106, boomF1: 46, boomDrop: 0.045,
-    boomDecay: 0.088, boomLvl: 0.95, bodyLP: 3700, bodyDecay: 0.068, bodyLvl: 0.7, brightDecay: 0.014, brightLvl: 0.45,
-    blastF: 1400, blastQ: 0.9, blastDecay: 0.02, blastLvl: 0.75, er: 0.32, drive: 3, mech: 'ak', mechLvl: 0.27,
-    loud: -0.5, tail: 1.15, far: 'battle', len: 0.58 }),
-  rifle308: G({ T: 0.0008, crackHP: 660, crackLvl: 1, crackNoise: 0.0034, boomF0: 96, boomF1: 42, boomDrop: 0.05,
-    boomDecay: 0.1, boomLvl: 1, bodyLP: 3500, bodyDecay: 0.078, bodyLvl: 0.75, brightDecay: 0.015, brightLvl: 0.45,
-    blastF: 1250, blastQ: 0.9, blastDecay: 0.022, blastLvl: 0.75, er: 0.33, drive: 3.2, mech: 'rifleHeavy', mechLvl: 0.22,
-    loud: 0, tail: 1.2, far: 'battle', len: 0.62 }),
-  lmg556: G({ T: 0.0005, crackHP: 900, crackLvl: 1, crackNoise: 0.0028, boomF0: 124, boomF1: 54, boomDrop: 0.035,
-    boomDecay: 0.07, boomLvl: 0.82, bodyLP: 4500, bodyDecay: 0.054, bodyLvl: 0.62, brightDecay: 0.012, brightLvl: 0.5,
-    blastF: 2150, blastQ: 1, blastDecay: 0.016, blastLvl: 0.7, er: 0.3, drive: 2.8, mech: 'lmg', mechLvl: 0.3,
-    loud: -0.8, tail: 1.1, far: 'rifle', len: 0.52 }),
-  lmg762: G({ T: 0.0008, crackHP: 660, crackLvl: 1, crackNoise: 0.0034, boomF0: 94, boomF1: 41, boomDrop: 0.05,
-    boomDecay: 0.1, boomLvl: 1, bodyLP: 3400, bodyDecay: 0.08, bodyLvl: 0.76, brightDecay: 0.015, brightLvl: 0.45,
-    blastF: 1200, blastQ: 0.9, blastDecay: 0.022, blastLvl: 0.76, er: 0.33, drive: 3.2, mech: 'lmgHeavy', mechLvl: 0.32,
-    loud: 0, tail: 1.25, far: 'battle', len: 0.62 }),
-  dmr762: G({ T: 0.00078, crackHP: 680, crackLvl: 1, crackNoise: 0.0035, boomF0: 95, boomF1: 41, boomDrop: 0.05,
-    boomDecay: 0.105, boomLvl: 1, bodyLP: 3600, bodyDecay: 0.082, bodyLvl: 0.76, brightDecay: 0.016, brightLvl: 0.5,
-    blastF: 1300, blastQ: 0.9, blastDecay: 0.022, blastLvl: 0.76, er: 0.34, drive: 3.3, mech: 'dmr', mechLvl: 0.24,
-    loud: 0.3, tail: 1.3, far: 'battle', len: 0.66 }),
-  dmr308: G({ T: 0.0008, crackHP: 660, crackLvl: 1, crackNoise: 0.0034, boomF0: 96, boomF1: 42, boomDrop: 0.05,
-    boomDecay: 0.1, boomLvl: 1, bodyLP: 3500, bodyDecay: 0.08, bodyLvl: 0.75, brightDecay: 0.015, brightLvl: 0.48,
-    blastF: 1250, blastQ: 0.9, blastDecay: 0.022, blastLvl: 0.75, er: 0.34, drive: 3.2, mech: 'dmr', mechLvl: 0.22,
-    loud: 0.2, tail: 1.25, far: 'battle', len: 0.64 }),
-  sniper308: G({ T: 0.00082, crackHP: 650, crackLvl: 1, crackNoise: 0.0036, boomF0: 92, boomF1: 40, boomDrop: 0.052,
-    boomDecay: 0.11, boomLvl: 1.02, bodyLP: 3500, bodyDecay: 0.085, bodyLvl: 0.78, brightDecay: 0.016, brightLvl: 0.5,
-    blastF: 1250, blastQ: 0.9, blastDecay: 0.023, blastLvl: 0.76, er: 0.35, drive: 3.3, mech: null, loud: 0.5,
-    tail: 1.35, far: 'battle', len: 0.62 }),
-  sniper338: G({ T: 0.0012, crackHP: 520, crackLvl: 1, crackNoise: 0.0045, crackNoiseAmt: 0.65, boomF0: 76, boomF1: 34,
-    boomDrop: 0.065, boomDecay: 0.15, boomLvl: 1.1, bodyLP: 3100, bodyDecay: 0.12, bodyLvl: 0.85, brightDecay: 0.02,
-    brightLvl: 0.5, blastF: 920, blastQ: 0.8, blastDecay: 0.03, blastLvl: 0.8, er: 0.36, drive: 3.6, mech: null,
-    loud: 1.5, tail: 1.6, far: 'magnumRifle', len: 0.85 }),
-  sniper50: G({ T: 0.0016, crackHP: 420, crackLvl: 1, crackNoise: 0.006, crackNoiseAmt: 0.75, boomF0: 62, boomF1: 28,
-    boomDrop: 0.085, boomDecay: 0.2, boomLvl: 1.2, bodyLP: 2700, bodyDecay: 0.16, bodyLvl: 0.95, brightDecay: 0.025,
-    brightLvl: 0.55, blastF: 720, blastQ: 0.7, blastDecay: 0.04, blastLvl: 0.85, er: 0.4, drive: 4, mech: 'barrett',
-    mechLvl: 0.28, loud: 2.5, tail: 1.9, far: 'fifty', len: 1.05 }),
-  shotgun: G({ T: 0.0012, crackHP: 520, crackLvl: 0.75, crackNoise: 0.005, crackNoiseAmt: 0.7, boomF0: 92, boomF1: 42,
-    boomDrop: 0.055, boomDecay: 0.12, boomLvl: 1.1, bodyLP: 2300, bodyDecay: 0.1, bodyLvl: 0.9, brightDecay: 0.018,
-    brightLvl: 0.4, blastF: 620, blastQ: 0.7, blastDecay: 0.035, blastLvl: 0.85, er: 0.36, drive: 3.2, mech: null,
-    loud: 0.5, tail: 1.25, supersonic: false, far: 'shotgun', len: 0.72 }),
+  pistol9: G({ T: 0.00045, crackHP: 950, crackLvl: 0.9, crackNoise: 0.0025, boomF0: 160, boomF1: 70, boomDrop: 0.012,
+    boomDecay: 0.028, boomLvl: 0.5, rumbleLvl: 0.35, bodyLP: 3300, bodyDecay: 0.022, bodyLvl: 0.5, brightDecay: 0.007,
+    blastF: 1850, blastQ: 1.1, blastDecay: 0.011, blastLvl: 0.6, er: 0.26, erDelay: 0.0075, drive: 2, mech: 'pistol',
+    mechLvl: 0.2, loud: -2.5, tail: 0.8, supersonic: false, far: 'light', len: 0.32 }),
+  pistol45: G({ T: 0.0007, crackHP: 700, crackLvl: 0.8, crackNoise: 0.003, boomF0: 130, boomF1: 58, boomDrop: 0.015,
+    boomDecay: 0.036, boomLvl: 0.6, rumbleLvl: 0.45, bodyLP: 2500, bodyDecay: 0.028, bodyLvl: 0.6, brightDecay: 0.008,
+    brightLvl: 0.35, blastF: 1100, blastQ: 1, blastDecay: 0.015, blastLvl: 0.65, er: 0.28, drive: 2.2, mech: 'pistol',
+    mechLvl: 0.21, loud: -2, tail: 0.85, supersonic: false, far: 'light', len: 0.35 }),
+  pistol50: G({ T: 0.0011, crackHP: 520, crackLvl: 1, crackNoise: 0.004, boomF0: 105, boomF1: 46, boomDrop: 0.02,
+    boomDecay: 0.05, boomLvl: 0.75, rumbleLvl: 0.55, bodyLP: 2300, bodyDecay: 0.04, bodyLvl: 0.75, brightDecay: 0.012,
+    blastF: 820, blastQ: 0.9, blastDecay: 0.02, blastLvl: 0.7, er: 0.32, drive: 2.4, mech: 'pistolHeavy', mechLvl: 0.24,
+    loud: -0.5, tail: 1.1, far: 'magnum', len: 0.45 }),
+  revolver: G({ T: 0.0009, crackHP: 620, crackLvl: 1, crackNoise: 0.006, crackNoiseAmt: 0.8, boomF0: 115, boomF1: 50,
+    boomDrop: 0.018, boomDecay: 0.045, boomLvl: 0.7, rumbleLvl: 0.5, bodyLP: 2700, bodyDecay: 0.036, bodyLvl: 0.7,
+    brightDecay: 0.011, blastF: 950, blastQ: 0.9, blastDecay: 0.018, blastLvl: 0.7, er: 0.3, drive: 2.4, mech: 'revolver',
+    mechLvl: 0.12, loud: -1, tail: 1.05, far: 'magnum', len: 0.42 }),
+  smg9: G({ T: 0.00048, crackHP: 900, crackLvl: 0.9, crackNoise: 0.0026, boomF0: 150, boomF1: 66, boomDrop: 0.013,
+    boomDecay: 0.03, boomLvl: 0.52, rumbleLvl: 0.38, bodyLP: 3500, bodyDecay: 0.024, bodyLvl: 0.52, brightDecay: 0.007,
+    blastF: 1700, blastQ: 1.1, blastDecay: 0.012, blastLvl: 0.62, er: 0.26, drive: 2, mech: 'smg', mechLvl: 0.26,
+    loud: -2.5, tail: 0.85, supersonic: false, far: 'light', len: 0.32 }),
+  smg45: G({ T: 0.00068, crackHP: 720, crackLvl: 0.82, crackNoise: 0.003, boomF0: 125, boomF1: 56, boomDrop: 0.015,
+    boomDecay: 0.038, boomLvl: 0.6, rumbleLvl: 0.45, bodyLP: 2600, bodyDecay: 0.03, bodyLvl: 0.6, brightDecay: 0.008,
+    brightLvl: 0.35, blastF: 1050, blastQ: 1, blastDecay: 0.016, blastLvl: 0.66, er: 0.28, drive: 2.2, mech: 'smgHeavy',
+    mechLvl: 0.28, loud: -2, tail: 0.9, supersonic: false, far: 'light', len: 0.35 }),
+  smg46: G({ T: 0.0004, crackHP: 1250, crackLvl: 1, crackNoise: 0.0022, boomF0: 175, boomF1: 78, boomDrop: 0.011,
+    boomDecay: 0.024, boomLvl: 0.42, rumbleLvl: 0.3, bodyLP: 4300, bodyDecay: 0.02, bodyLvl: 0.45, brightDecay: 0.007,
+    brightLvl: 0.5, blastF: 2600, blastQ: 1.2, blastDecay: 0.01, blastLvl: 0.65, er: 0.22, drive: 2, mech: 'smg',
+    mechLvl: 0.22, loud: -2.5, tail: 0.8, far: 'light', len: 0.3 }),
+  smg57: G({ T: 0.00042, crackHP: 1150, crackLvl: 1, crackNoise: 0.0023, boomF0: 165, boomF1: 74, boomDrop: 0.012,
+    boomDecay: 0.026, boomLvl: 0.44, rumbleLvl: 0.32, bodyLP: 4100, bodyDecay: 0.021, bodyLvl: 0.47, brightDecay: 0.0075,
+    brightLvl: 0.48, blastF: 2300, blastQ: 1.15, blastDecay: 0.011, blastLvl: 0.64, er: 0.22, drive: 2, mech: 'smgBullpup',
+    mechLvl: 0.24, loud: -2.5, tail: 0.8, far: 'light', len: 0.3 }),
+  rifle556: G({ T: 0.0005, crackHP: 900, crackLvl: 1, crackNoise: 0.0028, boomF0: 135, boomF1: 60, boomDrop: 0.015,
+    boomDecay: 0.04, boomLvl: 0.6, rumbleLvl: 0.45, bodyLP: 4600, bodyDecay: 0.032, bodyLvl: 0.6, brightDecay: 0.011,
+    brightLvl: 0.5, blastF: 2200, blastQ: 1, blastDecay: 0.015, blastLvl: 0.7, er: 0.3, drive: 2.4, mech: 'rifle',
+    mechLvl: 0.2, loud: -1, tail: 1, far: 'rifle', len: 0.42 }),
+  rifle545: G({ T: 0.00047, crackHP: 1000, crackLvl: 1, crackNoise: 0.0026, boomF0: 145, boomF1: 64, boomDrop: 0.014,
+    boomDecay: 0.036, boomLvl: 0.55, rumbleLvl: 0.4, bodyLP: 4900, bodyDecay: 0.03, bodyLvl: 0.56, brightDecay: 0.01,
+    brightLvl: 0.52, blastF: 2500, blastQ: 1.05, blastDecay: 0.014, blastLvl: 0.68, er: 0.29, drive: 2.3, mech: 'akLight',
+    mechLvl: 0.24, loud: -1.2, tail: 1, far: 'rifle', len: 0.4 }),
+  rifle762: G({ T: 0.0007, crackHP: 720, crackLvl: 0.95, crackNoise: 0.0032, boomF0: 115, boomF1: 52, boomDrop: 0.018,
+    boomDecay: 0.05, boomLvl: 0.72, rumbleLvl: 0.55, bodyLP: 3700, bodyDecay: 0.04, bodyLvl: 0.7, brightDecay: 0.013,
+    brightLvl: 0.45, blastF: 1400, blastQ: 0.9, blastDecay: 0.019, blastLvl: 0.75, er: 0.32, drive: 2.6, mech: 'ak',
+    mechLvl: 0.27, loud: -0.5, tail: 1.15, far: 'battle', len: 0.45 }),
+  rifle308: G({ T: 0.0008, crackHP: 660, crackLvl: 1, crackNoise: 0.0034, boomF0: 105, boomF1: 48, boomDrop: 0.02,
+    boomDecay: 0.058, boomLvl: 0.78, rumbleLvl: 0.6, bodyLP: 3500, bodyDecay: 0.046, bodyLvl: 0.75, brightDecay: 0.014,
+    brightLvl: 0.45, blastF: 1250, blastQ: 0.9, blastDecay: 0.021, blastLvl: 0.75, er: 0.33, drive: 2.8, mech: 'rifleHeavy',
+    mechLvl: 0.22, loud: 0, tail: 1.2, far: 'battle', len: 0.48 }),
+  lmg556: G({ T: 0.0005, crackHP: 900, crackLvl: 1, crackNoise: 0.0028, boomF0: 132, boomF1: 58, boomDrop: 0.015,
+    boomDecay: 0.042, boomLvl: 0.62, rumbleLvl: 0.47, bodyLP: 4500, bodyDecay: 0.034, bodyLvl: 0.62, brightDecay: 0.011,
+    brightLvl: 0.5, blastF: 2150, blastQ: 1, blastDecay: 0.015, blastLvl: 0.7, er: 0.3, drive: 2.4, mech: 'lmg', mechLvl: 0.3,
+    loud: -0.8, tail: 1.1, far: 'rifle', len: 0.42 }),
+  lmg762: G({ T: 0.0008, crackHP: 660, crackLvl: 1, crackNoise: 0.0034, boomF0: 104, boomF1: 47, boomDrop: 0.02,
+    boomDecay: 0.058, boomLvl: 0.78, rumbleLvl: 0.6, bodyLP: 3400, bodyDecay: 0.046, bodyLvl: 0.76, brightDecay: 0.014,
+    brightLvl: 0.45, blastF: 1200, blastQ: 0.9, blastDecay: 0.021, blastLvl: 0.76, er: 0.33, drive: 2.8, mech: 'lmgHeavy',
+    mechLvl: 0.32, loud: 0, tail: 1.25, far: 'battle', len: 0.48 }),
+  dmr762: G({ T: 0.00078, crackHP: 680, crackLvl: 1, crackNoise: 0.0035, boomF0: 104, boomF1: 47, boomDrop: 0.02,
+    boomDecay: 0.06, boomLvl: 0.8, rumbleLvl: 0.62, bodyLP: 3600, bodyDecay: 0.048, bodyLvl: 0.76, brightDecay: 0.015,
+    brightLvl: 0.5, blastF: 1300, blastQ: 0.9, blastDecay: 0.021, blastLvl: 0.76, er: 0.34, drive: 2.8, mech: 'dmr',
+    mechLvl: 0.24, loud: 0.3, tail: 1.3, far: 'battle', len: 0.5 }),
+  dmr308: G({ T: 0.0008, crackHP: 660, crackLvl: 1, crackNoise: 0.0034, boomF0: 105, boomF1: 48, boomDrop: 0.02,
+    boomDecay: 0.058, boomLvl: 0.78, rumbleLvl: 0.6, bodyLP: 3500, bodyDecay: 0.046, bodyLvl: 0.75, brightDecay: 0.014,
+    brightLvl: 0.48, blastF: 1250, blastQ: 0.9, blastDecay: 0.021, blastLvl: 0.75, er: 0.34, drive: 2.8, mech: 'dmr',
+    mechLvl: 0.22, loud: 0.2, tail: 1.25, far: 'battle', len: 0.5 }),
+  sniper308: G({ T: 0.00082, crackHP: 650, crackLvl: 1, crackNoise: 0.0036, boomF0: 100, boomF1: 46, boomDrop: 0.021,
+    boomDecay: 0.062, boomLvl: 0.8, rumbleLvl: 0.62, bodyLP: 3500, bodyDecay: 0.05, bodyLvl: 0.78, brightDecay: 0.015,
+    brightLvl: 0.5, blastF: 1250, blastQ: 0.9, blastDecay: 0.022, blastLvl: 0.76, er: 0.35, drive: 2.9, mech: null,
+    loud: 0.5, tail: 1.35, far: 'battle', len: 0.5 }),
+  sniper338: G({ T: 0.0012, crackHP: 520, crackLvl: 1, crackNoise: 0.0045, crackNoiseAmt: 0.65, boomF0: 85, boomF1: 38,
+    boomDrop: 0.026, boomDecay: 0.08, boomLvl: 0.9, rumbleLvl: 0.7, rumbleLP: 200, bodyLP: 3100, bodyDecay: 0.065,
+    bodyLvl: 0.85, brightDecay: 0.018, brightLvl: 0.5, blastF: 920, blastQ: 0.8, blastDecay: 0.028, blastLvl: 0.8, er: 0.36,
+    drive: 3, mech: null, loud: 1.5, tail: 1.6, far: 'magnumRifle', len: 0.62 }),
+  sniper50: G({ T: 0.0016, crackHP: 420, crackLvl: 1, crackNoise: 0.006, crackNoiseAmt: 0.75, boomF0: 70, boomF1: 32,
+    boomDrop: 0.032, boomDecay: 0.1, boomLvl: 1, rumbleLvl: 0.8, rumbleLP: 180, bodyLP: 2700, bodyDecay: 0.085,
+    bodyLvl: 0.95, brightDecay: 0.022, brightLvl: 0.55, blastF: 720, blastQ: 0.7, blastDecay: 0.036, blastLvl: 0.85, er: 0.4,
+    drive: 3.2, mech: 'barrett', mechLvl: 0.28, loud: 2.5, tail: 1.9, far: 'fifty', len: 0.75 }),
+  shotgun: G({ T: 0.0012, crackHP: 520, crackLvl: 0.75, crackNoise: 0.005, crackNoiseAmt: 0.7, boomF0: 95, boomF1: 44,
+    boomDrop: 0.024, boomDecay: 0.07, boomLvl: 0.85, rumbleLvl: 0.65, rumbleLP: 220, bodyLP: 2300, bodyDecay: 0.06,
+    bodyLvl: 0.9, brightDecay: 0.016, brightLvl: 0.4, blastF: 620, blastQ: 0.7, blastDecay: 0.03, blastLvl: 0.85, er: 0.36,
+    drive: 2.8, mech: null, loud: 0.5, tail: 1.25, supersonic: false, far: 'shotgun', len: 0.55 }),
 };
 export const GUN_PROFILE_NAMES = Object.keys(GUN_PROFILES);
 
@@ -771,77 +798,100 @@ function mechLayer(s, type, len) {
   return normPeak(x);
 }
 
-/** Close-range (dry) gunshot: crack + boom + body + blast resonance + ground bounce + action. */
+/**
+ * Close-range (dry) gunshot: crack + boom + body + blast resonance + ground bounce, pre-mixed in
+ * JS, then saturated / EQ'd in the graph, with the clean action layer added after the saturator.
+ */
 function rGun(g, s, P, sup) {
   const r = s.rng; const L = g.dur;
-  const sum = g.gain(1 / (P.crackLvl + 0.6 * P.boomLvl + 0.3 * P.bodyLvl));
-  const post = g.gain(1);
-  g.chain(sum, g.shaper(sup ? Math.max(1.2, P.drive * 0.55) : P.drive), post, g.hp(28), g.ls(110, P.lowShelf), g.out);
-  // ground bounce / near reflections (thicken the transient like a real recording at shoulder height)
-  const er = g.gain(P.er * (sup ? 0.6 : 1));
-  g.chain(er, g.delay(r.j(P.erDelay, 0.15)), g.lp(3000), sum);
-  const er2 = g.gain(P.er * 0.45);
-  g.chain(er2, g.delay(r.j(P.erDelay * 2.6, 0.2)), g.lp(1900), sum);
+  const sum = s.buf(L); // pre-saturation mix
+  const erA = s.buf(L); // feeds the first (ground) reflection: crack + blast
+  const erB = s.buf(L); // feeds the second reflection: body
+  const add = (src, lvl, er) => { mixInto(sum, src, lvl); if (er) mixInto(er, src, lvl); };
 
   // (1) crack: Friedlander blast pulse + short noise burst, high-passed
   const crack = s.buf(0.04);
   s.friedlander(crack, 0, r.j(P.T, 0.1), 1, 1.6);
   mixInto(crack, s.noise(0.04, { attack: 0, decay: r.j(P.crackNoise, 0.15), filters: [['highpass', 1500]] }), P.crackNoiseAmt);
   s.filt(crack, 'highpass', r.j(P.crackHP, 0.1));
-  normPeak(crack);
-  const crackLvl = P.crackLvl * (sup ? (P.supersonic ? 0.3 : 0.05) : 1);
-  g.layer(crack, crackLvl, sum).connect(er);
+  add(normPeak(crack), P.crackLvl * (sup ? (P.supersonic ? 0.3 : 0.05) : 1), erA);
 
   // (2) boom: pitch-dropping sine thump with a little drive for audible harmonics
-  const boom = s.buf(Math.min(L, P.boomDecay * 8 + 0.01));
-  s.sweep(boom, 0, { f0: r.j(P.boomF0, 0.05), f1: r.j(P.boomF1, 0.04), drop: P.boomDrop, attack: 0.0008,
-    decay: r.j(P.boomDecay, 0.07) * (sup ? 0.55 : 1), amp: 1, drive: 1.6 });
-  g.layer(boom, P.boomLvl * (sup ? 0.38 : 1), sum);
+  s.sweep(sum, 0, { f0: r.j(P.boomF0, 0.05), f1: r.j(P.boomF1, 0.04), drop: P.boomDrop, attack: 0.0008,
+    decay: r.j(P.boomDecay, 0.07) * (sup ? 0.55 : 1), amp: P.boomLvl * (sup ? 0.38 : 1), drive: 1.6 });
+
+  // (2b) rumble: low-passed noise so the low end is not purely tonal
+  const rumDecay = r.j(P.boomDecay * 1.5, 0.1) * (sup ? 0.6 : 1);
+  add(s.noise(Math.min(L, rumDecay * 7 + 0.01), { attack: 0.001, decay: rumDecay,
+    filters: [['lowpass', r.j(P.rumbleLP, 0.1), 0.7], ['lowpass', P.rumbleLP * 1.4, 0.7], ['highpass', 30]] }), P.rumbleLvl * (sup ? 0.4 : 1));
 
   // (3) body: low-passed noise; (3b) bright noise that dies much faster (HF decays first)
   const bodyDecay = r.j(P.bodyDecay, 0.08) * (sup ? 0.6 : 1);
-  const body = s.noise(Math.min(L, bodyDecay * 7 + 0.01), { attack: 0.0003, decay: bodyDecay,
-    filters: [['lowpass', r.j(P.bodyLP, 0.08) * (sup ? 0.45 : 1), 0.6], ['highpass', 55]] });
-  g.layer(body, P.bodyLvl * (sup ? 0.5 : 1), sum).connect(er2);
-  const bright = s.noise(Math.min(L, P.brightDecay * 7 + 0.005), { attack: 0, decay: r.j(P.brightDecay, 0.1),
-    filters: [['highpass', 2600], ['lowpass', 13000]] });
-  g.layer(bright, P.brightLvl * (sup ? 0.1 : 1), sum);
+  add(s.noise(Math.min(L, bodyDecay * 7 + 0.01), { attack: 0.0003, decay: bodyDecay,
+    filters: [['lowpass', r.j(P.bodyLP, 0.08) * (sup ? 0.45 : 1), 0.6], ['highpass', 55]] }), P.bodyLvl * (sup ? 0.5 : 1), erB);
+  add(s.noise(Math.min(L, P.brightDecay * 7 + 0.005), { attack: 0, decay: r.j(P.brightDecay, 0.1),
+    filters: [['highpass', 2600], ['lowpass', 13000]] }), P.brightLvl * (sup ? 0.1 : 1));
 
   // (4) blast resonance: the calibre's "voice"
   const blastF = r.j(P.blastF, 0.06);
-  const blast = s.noise(Math.min(L, P.blastDecay * 7 + 0.005), { attack: 0.0002, decay: r.j(P.blastDecay, 0.1),
-    filters: [['bandpass', blastF, P.blastQ], ['bandpass', blastF * 1.08, P.blastQ]] });
-  g.layer(blast, P.blastLvl * (sup ? 0.3 : 1), sum).connect(er);
+  add(s.noise(Math.min(L, P.blastDecay * 7 + 0.005), { attack: 0.0002, decay: r.j(P.blastDecay, 0.1),
+    filters: [['bandpass', blastF, P.blastQ], ['bandpass', blastF * 1.08, P.blastQ]] }), P.blastLvl * (sup ? 0.3 : 1), erA);
 
-  if (sup) {
-    // muted "thwap" of gas leaving the can + low puff
-    const thwap = s.noise(0.2, { attack: 0.0012, decay: r.j(0.026, 0.1), filters: [['bandpass', blastF * 0.55, 1.3], ['lowpass', 2600]] });
-    g.layer(thwap, 0.9, sum);
-    const puff = s.noise(0.3, { attack: 0.002, decay: r.j(0.04, 0.1), filters: [['lowpass', 650], ['highpass', 60]] });
-    g.layer(puff, 0.6, sum);
+  if (sup) { // muted "thwap" of gas leaving the can + low puff
+    add(s.noise(0.2, { attack: 0.0012, decay: r.j(0.026, 0.1), filters: [['bandpass', blastF * 0.55, 1.3], ['lowpass', 2600]] }), 0.9);
+    add(s.noise(0.3, { attack: 0.002, decay: r.j(0.04, 0.1), filters: [['lowpass', 650], ['highpass', 60]] }), 0.6);
   }
 
+  // ground bounce / near reflections thicken the transient (as recorded at shoulder height)
+  s.filt(erA, 'lowpass', 3000); mixInto(sum, erA, P.er * (sup ? 0.6 : 1), s.idx(r.j(P.erDelay, 0.15)));
+  s.filt(erB, 'lowpass', 1900); mixInto(sum, erB, P.er * 0.45, s.idx(r.j(P.erDelay * 2.6, 0.2)));
+
+  const post = g.gain(1);
+  g.chain(g.src(sum), g.gain(1 / (P.crackLvl + 0.6 * P.boomLvl + 0.3 * P.bodyLvl)),
+    g.shaper(sup ? Math.max(1.2, P.drive * 0.55) : P.drive), post, g.hp(28), g.ls(110, P.lowShelf), g.out);
   // (5) action / mechanism, clean (after the saturator)
   if (P.mech) g.layer(mechLayer(s, P.mech, Math.min(L, 0.2)), P.mechLvl * (sup ? 1.9 : 1), post, [g.hp(350)]);
 }
 
+/**
+ * Rolling valley echo synthesised directly (cheaper than convolution): smeared, darkening
+ * low-passed echo clusters with low thump replicas, then a diffuse rumble. Adds into x.
+ */
+function rollingEcho(s, x, { lp = 900, f0 = 90, f1 = 45, decay = 0.08, echo = 0.8, rt60 = 3, start = 0 }) {
+  const r = s.rng; const L = x.length / s.sr;
+  const echoes = [[0.19, 0.55], [0.29, 0.22], [0.36, 0.45], [0.47, 0.2], [0.58, 0.42], [0.72, 0.18], [0.86, 0.34], [1.02, 0.15],
+    [1.18, 0.27], [1.4, 0.12], [1.6, 0.2], [1.85, 0.1], [2.08, 0.14], [2.6, 0.09], [3.15, 0.06]];
+  echoes.forEach(([t, a], k) => {
+    const tt = start + t * r.range(0.9, 1.1);
+    if (tt > L - 0.25) return;
+    const smear = 0.035 + t * 0.06;
+    const fc = Math.max(220, lp * (1 - Math.min(0.75, t * 0.32)));
+    const amp = a * echo * r.range(0.75, 1.15);
+    const burst = s.noise(Math.min(L - tt, smear * 9 + 0.05), { attack: 0.004, decay: smear, filters: [['lowpass', fc, 0.6], ['lowpass', fc * 1.3, 0.6], ['highpass', 40]] });
+    const rise = Math.min(burst.length, s.n(smear * 0.7));
+    for (let i = 0; i < rise; i++) burst[i] *= 0.5 - 0.5 * Math.cos((Math.PI * i) / rise); // soft onset
+    mixInto(x, burst, amp * 0.55, s.idx(tt));
+    s.sweep(x, tt, { f0: f0 * 0.85, f1, drop: 0.05, attack: 0.01 + smear * 0.4, decay: decay * 1.2 + smear * 0.6, amp: amp * 0.3 });
+  });
+  const t0 = start + 0.06; const dur = L - t0;
+  if (dur > 0.3) {
+    mixInto(x, s.noise(dur, { attack: 0.3, decay: rt60 / 6.91, filters: [['lowpass', 420], ['highpass', 35]] }), 0.16 * echo, s.idx(t0));
+  }
+  return x;
+}
+
 /** Distant shot: dull thump + rolling valley echo (rendered at a low sample rate). */
 function rGunFar(g, s, C) {
-  const r = s.rng;
-  const dry = g.gain(1); const out = g.gain(1);
-  g.chain(out, g.shaper(1.4), g.hp(30), g.out);
-  dry.connect(out);
-  g.chain(dry, g.conv([echoIR(g.sr, r, { dur: C.ir, rt60: C.rt60 })]), g.gain(C.echo), out);
+  const r = s.rng; const x = s.buf(g.dur);
   const thump = s.buf(0.25);
   s.friedlander(thump, 0.001, r.j(C.T, 0.1), 1, 1.4);
   s.filt(thump, 'lowpass', C.lp * 1.3); s.filt(thump, 'highpass', 35);
-  normPeak(thump);
-  g.layer(thump, 0.75, dry);
-  const boom = s.buf(C.decay * 9);
-  s.sweep(boom, 0, { f0: r.j(C.f0, 0.05), f1: C.f1, drop: 0.05, attack: 0.002, decay: r.j(C.decay, 0.08), amp: 1, drive: 1.2 });
-  g.layer(boom, 0.8, dry);
-  g.layer(s.noise(C.decay * 9, { attack: 0.001, decay: r.j(C.decay * 1.2, 0.1), filters: [['lowpass', C.lp, 0.6], ['highpass', 40]] }), 0.6, dry);
-  g.layer(s.noise(0.2, { attack: 0.0005, decay: 0.02, filters: [['bandpass', r.j(C.pop, 0.08), 1.3]] }), 0.45, dry);
+  mixInto(x, normPeak(thump), 0.75);
+  s.sweep(x, 0, { f0: r.j(C.f0, 0.05), f1: C.f1, drop: 0.05, attack: 0.002, decay: r.j(C.decay, 0.08), amp: 0.8, drive: 1.2 });
+  mixInto(x, s.noise(C.decay * 9, { attack: 0.001, decay: r.j(C.decay * 1.2, 0.1), filters: [['lowpass', C.lp, 0.6], ['highpass', 40]] }), 0.6);
+  mixInto(x, s.noise(0.2, { attack: 0.0005, decay: 0.02, filters: [['bandpass', r.j(C.pop, 0.08), 1.3]] }), 0.45);
+  rollingEcho(s, x, { lp: C.lp, f0: C.f0, f1: C.f1, decay: C.decay, echo: C.echo, rt60: C.rt60 });
+  g.chain(g.src(x), g.gain(0.8), g.shaper(1.4), g.hp(30), g.out);
 }
 
 // ------------------------------------------------------------------------------ recipes: mechanical foley
@@ -1243,16 +1293,12 @@ function rExplosion(g, s) {
 }
 
 function rExplosionFar(g, s) {
-  const r = s.rng;
-  const dry = g.gain(1); const out = g.gain(1);
-  g.chain(out, g.shaper(1.6), g.hp(25), g.out);
-  dry.connect(out);
-  g.chain(dry, g.conv([echoIR(g.sr, r, { dur: 3.6, rt60: 4, density: 1.4 })]), g.gain(1.1), out);
-  const boom = s.buf(1.6);
-  s.sweep(boom, 0, { f0: 55, f1: 24, drop: 0.15, attack: 0.004, decay: 0.42, amp: 1, drive: 1.3 });
-  g.layer(boom, 1, dry);
-  g.layer(s.noise(1.6, { attack: 0.003, decay: 0.25, filters: [['lowpass', 700], ['highpass', 30]] }), 0.8, dry);
-  g.layer(s.noise(2.5, { attack: 0.05, decay: 0.7, filters: [['lowpass', 220], ['lowpass', 220]] }), 0.6, dry);
+  const r = s.rng; const x = s.buf(g.dur);
+  s.sweep(x, 0, { f0: r.j(55, 0.05), f1: 24, drop: 0.15, attack: 0.004, decay: r.j(0.42, 0.08), amp: 1, drive: 1.3 });
+  mixInto(x, s.noise(1.6, { attack: 0.003, decay: 0.25, filters: [['lowpass', 700], ['highpass', 30]] }), 0.8);
+  mixInto(x, s.noise(2.5, { attack: 0.05, decay: 0.7, filters: [['lowpass', 220], ['lowpass', 220]] }), 0.6);
+  rollingEcho(s, x, { lp: 650, f0: 55, f1: 26, decay: 0.3, echo: 1.2, rt60: 4 });
+  g.chain(g.src(x), g.gain(0.7), g.shaper(1.6), g.hp(25), g.out);
 }
 
 function rSmoke(g, s) {
@@ -1436,19 +1482,20 @@ export function windNoise(sr, rng, dur = 6) {
 export function insectLoop(sr, rng, dur = 6) {
   const n = Math.round(dur * sr); const x = new Float32Array(n);
   const crickets = [[4300, 2, 0.5], [4750, 3, 0.35], [5100, 5, 0.25], [3950, 4, 0.3]];
-  for (const [fc, chirpsPerLoop, amp] of crickets) {
+  for (const [fc, rate, amp] of crickets) {
     const f = Math.round(fc * dur) / dur; // integer number of carrier cycles per loop
-    const chirps = Math.round(chirpsPerLoop * dur / 2.2) || 1;
-    const chirpLen = dur / chirps; const pulses = rng.int(3, 5); const pulseRate = rng.range(28, 36);
-    const phase0 = rng.f();
-    for (let i = 0; i < n; i++) {
-      const t = i / sr;
-      const tc = ((t / chirpLen + phase0) % 1) * chirpLen; // time inside the chirp period
-      const pi = tc * pulseRate;
-      if (pi >= pulses) continue;
-      const pf = pi % 1;
-      const env = pf < 0.6 ? Math.sin((Math.PI * pf) / 0.6) : 0;
-      x[i] += Math.sin((TAU * f * i) / sr) * env * amp;
+    const w = (TAU * f) / sr;
+    const chirps = Math.max(1, Math.round((rate * dur) / 2.2));
+    const chirpLen = n / chirps; const pulses = rng.int(3, 5); const pulseLen = sr / rng.range(28, 36);
+    const on = Math.round(pulseLen * 0.6); const off0 = Math.round(rng.f() * chirpLen);
+    for (let c = 0; c < chirps; c++) {
+      for (let p = 0; p < pulses; p++) {
+        const s0 = Math.round(off0 + c * chirpLen + p * pulseLen);
+        for (let k = 0; k < on; k++) {
+          const i = (s0 + k) % n; // wrap around the loop seam
+          x[i] += Math.sin(w * i) * Math.sin((Math.PI * k) / on) * amp;
+        }
+      }
     }
   }
   const h = white(n, rng); biquad(h, 'bandpass', 7200, 1.2, sr); normPeak(h);
@@ -1485,8 +1532,9 @@ function finalize(buf, norm) {
       d[i] = v;
     }
   }
+  const thr = dbToGain(norm && norm.trim !== undefined ? norm.trim : -66);
   let last = d.length - 1;
-  while (last > 0 && Math.abs(d[last]) < 1.5e-4) last--;
+  while (last > 0 && Math.abs(d[last]) < thr) last--;
   const len = Math.min(d.length, last + Math.ceil(0.01 * sr));
   const fade = Math.min(len, Math.ceil(0.006 * sr));
   for (let i = 0; i < fade; i++) d[len - 1 - i] *= i / fade;
@@ -1519,7 +1567,7 @@ export function listBuffers(o, out = []) {
   return out;
 }
 
-const GUN_REF_DB = -14; // K-weighted loudness of the first 150 ms for profile loud = 0
+const GUN_REF_DB = -14; // K-weighted loudness of the first 100 ms for profile loud = 0
 
 /**
  * Synthesise the whole sound bank.
@@ -1529,7 +1577,7 @@ const GUN_REF_DB = -14; // K-weighted loudness of the first 150 ms for profile l
 export async function buildBank({ sampleRate, concurrency = 4, onProgress = null, isCancelled = null } = {}) {
   const t0 = now();
   const ctxRate = sampleRate || 48000;
-  const hi = Math.min(48000, ctxRate); const lo = Math.round(hi / 2); const far = 16000;
+  const hi = Math.min(48000, ctxRate); const lo = Math.round(hi / 2); const far = 11025;
   const bank = {
     gun: {}, gunFar: {}, mech: {}, foot: {}, impact: {}, casing: {}, hit: {}, ui: {}, whiz: { super: [], sub: [] },
     hurt: { local: [], remote: [] }, explosion: { near: [], far: [] }, gear: [], jump: [], land: [], rustle: [],
@@ -1540,29 +1588,33 @@ export async function buildBank({ sampleRate, concurrency = 4, onProgress = null
   const arr = (o, k) => (o[k] = o[k] || []);
 
   // UI & feedback first: they are needed immediately (menus)
-  for (const n of UI_NAMES) job(`ui.${n}`, hi, n.startsWith('match') ? 1.7 : n === 'spawn' ? 0.9 : 0.6, (g, s) => rUI(g, s, n), (b) => { bank.ui[n] = b; }, { peak: -3 });
-  for (const k of HITMARKER_KINDS) job(`hit.${k}`, hi, 0.5, (g, s) => rHitmarker(g, s, k), (b) => { bank.hit[k] = b; }, { peak: -2 });
+  const longUI = ['spawn', 'match_start', 'match_end', 'killstreak', 'error'];
+  for (const n of UI_NAMES) {
+    job(`ui.${n}`, longUI.includes(n) ? lo : hi, n.startsWith('match') ? 1.7 : n === 'spawn' ? 0.9 : 0.6, (g, s) => rUI(g, s, n),
+      (b) => { bank.ui[n] = b; }, { peak: -3, trim: -60 });
+  }
+  for (const k of HITMARKER_KINDS) job(`hit.${k}`, hi, 0.5, (g, s) => rHitmarker(g, s, k), (b) => { bank.hit[k] = b; }, { peak: -2, trim: -60 });
   // weapons
   for (const p of GUN_PROFILE_NAMES) {
     const P = GUN_PROFILES[p]; bank.gun[p] = { n: [], s: [] };
-    for (let v = 0; v < 3; v++) job(`gun.${p}.${v}`, hi, P.len, (g, s) => rGun(g, s, P, false), (b) => { bank.gun[p].n[v] = b; }, { loud: GUN_REF_DB + P.loud });
+    for (let v = 0; v < 3; v++) job(`gun.${p}.${v}`, hi, P.len, (g, s) => rGun(g, s, P, false), (b) => { bank.gun[p].n[v] = b; }, { loud: GUN_REF_DB + P.loud, win: 0.1, trim: -58 });
     for (let v = 0; v < 2; v++) {
       job(`gun.${p}.sup${v}`, hi, Math.min(P.len, 0.45), (g, s) => rGun(g, s, P, true), (b) => { bank.gun[p].s[v] = b; },
-        { loud: GUN_REF_DB + P.loud - (P.supersonic ? 8 : 11) });
+        { loud: GUN_REF_DB + P.loud - (P.supersonic ? 8 : 11), win: 0.1, trim: -58 });
     }
   }
   for (const c of Object.keys(FAR_CLASSES)) {
     const C = FAR_CLASSES[c];
-    for (let v = 0; v < 2; v++) job(`far.${c}.${v}`, far, C.ir + 0.35, (g, s) => rGunFar(g, s, C), (b) => { arr(bank.gunFar, c)[v] = b; }, { loud: -17, win: 0.3 });
+    for (let v = 0; v < 2; v++) job(`far.${c}.${v}`, far, C.ir + 0.35, (g, s) => rGunFar(g, s, C), (b) => { arr(bank.gunFar, c)[v] = b; }, { loud: -17, win: 0.3, trim: -56 });
   }
-  for (const m of MECH_NAMES) job(`mech.${m}`, hi, MECH[m][0], (g, s) => rMech(g, s, m), (b) => { bank.mech[m] = b; }, { peak: -3 });
-  for (const f of FOOT_SURFACES) for (let v = 0; v < 4; v++) job(`foot.${f}.${v}`, hi, 0.4, (g, s) => rFoot(g, s, f), (b) => { arr(bank.foot, f)[v] = b; }, { peak: -3 });
-  for (const f of IMPACT_SURFACES) for (let v = 0; v < 3; v++) job(`impact.${f}.${v}`, hi, f === 'metal' ? 0.75 : 0.5, (g, s) => rImpact(g, s, f, v), (b) => { arr(bank.impact, f)[v] = b; }, { peak: -2 });
+  for (const m of MECH_NAMES) job(`mech.${m}`, hi, MECH[m][0], (g, s) => rMech(g, s, m), (b) => { bank.mech[m] = b; }, { peak: -3, trim: -60 });
+  for (const f of FOOT_SURFACES) for (let v = 0; v < 4; v++) job(`foot.${f}.${v}`, hi, 0.4, (g, s) => rFoot(g, s, f), (b) => { arr(bank.foot, f)[v] = b; }, { peak: -3, trim: -58 });
+  for (const f of IMPACT_SURFACES) for (let v = 0; v < 3; v++) job(`impact.${f}.${v}`, hi, f === 'metal' ? 0.75 : 0.5, (g, s) => rImpact(g, s, f, v), (b) => { arr(bank.impact, f)[v] = b; }, { peak: -2, trim: -60 });
   for (let v = 0; v < 3; v++) {
     job(`whiz.super.${v}`, hi, 0.3, (g, s) => rWhiz(g, s, true), (b) => { bank.whiz.super[v] = b; }, { peak: -1 });
     job(`whiz.sub.${v}`, hi, 0.4, (g, s) => rWhiz(g, s, false), (b) => { bank.whiz.sub[v] = b; }, { peak: -3 });
   }
-  for (const k of CASING_KINDS) for (let v = 0; v < 3; v++) job(`casing.${k}.${v}`, hi, k === 'big' ? 0.8 : 0.6, (g, s) => rCasing(g, s, k), (b) => { arr(bank.casing, k)[v] = b; }, { peak: -3 });
+  for (const k of CASING_KINDS) for (let v = 0; v < 3; v++) job(`casing.${k}.${v}`, hi, k === 'big' ? 0.8 : 0.6, (g, s) => rCasing(g, s, k), (b) => { arr(bank.casing, k)[v] = b; }, { peak: -3, trim: -58 });
   for (let v = 0; v < 3; v++) job(`gear.${v}`, hi, 0.3, (g, s) => rGear(g, s), (b) => { bank.gear[v] = b; }, { peak: -3 });
   for (let v = 0; v < 2; v++) job(`jump.${v}`, hi, 0.45, (g, s) => rJump(g, s), (b) => { bank.jump[v] = b; }, { peak: -3 });
   for (let v = 0; v < 3; v++) job(`land.${v}`, hi, 0.5, (g, s) => rLand(g, s), (b) => { bank.land[v] = b; }, { peak: -2 });
@@ -1572,22 +1624,25 @@ export async function buildBank({ sampleRate, concurrency = 4, onProgress = null
   }
   job('heart', lo, 0.6, (g, s) => rHeart(g, s), (b) => { bank.heart = b; }, { peak: -3 });
   for (let v = 0; v < 2; v++) {
-    job(`explosion.near.${v}`, hi, 2.6, (g, s) => rExplosion(g, s), (b) => { bank.explosion.near[v] = b; }, { peak: -0.5 });
-    job(`explosion.far.${v}`, far, 4.2, (g, s) => rExplosionFar(g, s), (b) => { bank.explosion.far[v] = b; }, { loud: -15, win: 0.5 });
+    job(`explosion.near.${v}`, lo, 2.6, (g, s) => rExplosion(g, s), (b) => { bank.explosion.near[v] = b; }, { peak: -0.5, trim: -60 });
+    job(`explosion.far.${v}`, far, 4.2, (g, s) => rExplosionFar(g, s), (b) => { bank.explosion.far[v] = b; }, { loud: -15, win: 0.5, trim: -56 });
   }
   job('smoke', lo, 3.3, (g, s) => rSmoke(g, s), (b) => { bank.smoke = b; }, { peak: -3 });
   for (let v = 0; v < 3; v++) job(`rustle.${v}`, lo, 2.4, (g, s) => rRustle(g, s), (b) => { bank.rustle[v] = b; }, { peak: -3 });
-  for (let v = 0; v < 2; v++) job(`rockfall.${v}`, lo, 4.2, (g, s) => rRockfall(g, s), (b) => { bank.rockfall[v] = b; }, { peak: -2 });
+  for (let v = 0; v < 2; v++) job(`rockfall.${v}`, far, 4.2, (g, s) => rRockfall(g, s), (b) => { bank.rockfall[v] = b; }, { peak: -2, trim: -60 });
 
   // JS-only assets (no rendering): loops and impulse responses at the context rate
+  const irRng = new Rng(hashString('ir')); const irCh = [];
   const jsAssets = [
+    () => { irCh[0] = outdoorIRChannel(ctxRate, irRng, 0); },
+    () => { irCh[1] = outdoorIRChannel(ctxRate, irRng, 1); bank.ir.outdoor = toBuffer([irCh[0], irCh[1]], ctxRate); },
+    () => { irCh[2] = indoorIRChannel(ctxRate, irRng, 0); },
+    () => { irCh[3] = indoorIRChannel(ctxRate, irRng, 1); bank.ir.indoor = toBuffer([irCh[2], irCh[3]], ctxRate); },
     () => { bank.wind = toBuffer([windNoise(lo, new Rng(hashString('wind')))], lo); },
     () => { bank.insects = toBuffer([insectLoop(lo, new Rng(hashString('insects')))], lo); },
-    () => { bank.ir.outdoor = toBuffer(outdoorIR(ctxRate, new Rng(hashString('ir.outdoor'))), ctxRate); },
-    () => { bank.ir.indoor = toBuffer(indoorIR(ctxRate, new Rng(hashString('ir.indoor'))), ctxRate); },
   ];
 
-  const total = jobs.length + jsAssets.length; let done = 0; let maxBlock = 0; let next = 0;
+  const total = jobs.length + jsAssets.length; let done = 0; let maxBlock = 0; let next = 0; const timings = [];
   const tick = () => { done++; if (onProgress) { try { onProgress(done, total); } catch { /* ignore */ } } };
   for (const a of jsAssets) {
     const ts = now(); a(); maxBlock = Math.max(maxBlock, now() - ts); tick();
@@ -1603,14 +1658,18 @@ export async function buildBank({ sampleRate, concurrency = 4, onProgress = null
         const s = new Synth(jb.sr, new Rng(hashString(jb.name)));
         jb.recipe(g, s);
         const p = g.render();
-        maxBlock = Math.max(maxBlock, now() - ts);
+        const tb = now() - ts;
+        const tr0 = now();
         const rendered = await p;
+        const tr = now() - tr0;
         ts = now();
         const b = finalize(rendered, jb.norm);
         const m = measure(b.getChannelData(0), b.sampleRate);
         bank.meta.set(b, { name: jb.name, peakDb: m.peakDb, loudDb: m.loudDb });
         jb.put(b);
-        maxBlock = Math.max(maxBlock, now() - ts);
+        const tf = now() - ts;
+        maxBlock = Math.max(maxBlock, tb, tf);
+        timings.push({ name: jb.name, build: tb, render: tr, fin: tf, bytes: b.length * 4 });
       } catch (e) {
         if (typeof console !== 'undefined') console.warn('[audio] synth failed:', jb.name, e);
       }
@@ -1619,6 +1678,6 @@ export async function buildBank({ sampleRate, concurrency = 4, onProgress = null
   };
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
   const bufs = listBuffers(bank);
-  bank.stats = { ms: Math.round(now() - t0), maxBlockMs: Math.round(maxBlock * 10) / 10, buffers: bufs.length, bytes: bufferBytes(bufs), rates: { hi, lo, far, ctx: ctxRate } };
+  bank.stats = { ms: Math.round(now() - t0), maxBlockMs: Math.round(maxBlock * 10) / 10, buffers: bufs.length, bytes: bufferBytes(bufs), rates: { hi, lo, far, ctx: ctxRate }, timings };
   return bank;
 }
