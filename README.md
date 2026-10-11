@@ -5,7 +5,9 @@ Squad. It runs in the browser on **Kali Linux** (and any other Linux, Windows or
 uses GPU 3D graphics through WebGL 2. Play **solo against AI bots** or **multiplayer with
 your friends** over your local network or the internet.
 
-![Highland Valley](docs/screenshots/valley.png)
+![Highland Valley at golden hour](docs/screenshots/valley.jpg)
+
+![In a solo match: red dot sight, squad, compass and minimap](docs/screenshots/gameplay.jpg)
 
 ## Features
 
