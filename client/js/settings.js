@@ -3,20 +3,20 @@ import { defaultLoadout, sanitizeLoadout } from '/shared/weapons.js';
 
 export const GRAPHICS_PRESETS = {
   low: {
-    renderScale: 0.7, shadows: 'low', viewDistance: 700, grassDensity: 0.25, treeDetail: 'low',
+    renderScale: 0.75, shadows: 'low', viewDistance: 700, grassDensity: 0.2, treeDetail: 'low',
     ao: false, bloom: false, antialias: 'fxaa', godrays: false, pipScopes: false, anisotropy: 2,
   },
   medium: {
-    renderScale: 0.85, shadows: 'medium', viewDistance: 1100, grassDensity: 0.5, treeDetail: 'medium',
-    ao: false, bloom: true, antialias: 'fxaa', godrays: false, pipScopes: true, anisotropy: 4,
+    renderScale: 0.9, shadows: 'medium', viewDistance: 1000, grassDensity: 0.45, treeDetail: 'medium',
+    ao: false, bloom: true, antialias: 'fxaa', godrays: false, pipScopes: false, anisotropy: 4,
   },
   high: {
-    renderScale: 1.0, shadows: 'high', viewDistance: 1600, grassDensity: 0.8, treeDetail: 'high',
-    ao: true, bloom: true, antialias: 'smaa', godrays: true, pipScopes: true, anisotropy: 8,
+    renderScale: 1.0, shadows: 'medium', viewDistance: 1400, grassDensity: 0.7, treeDetail: 'high',
+    ao: false, bloom: true, antialias: 'smaa', godrays: true, pipScopes: false, anisotropy: 8,
   },
   ultra: {
     renderScale: 1.0, shadows: 'ultra', viewDistance: 2400, grassDensity: 1.0, treeDetail: 'ultra',
-    ao: true, bloom: true, antialias: 'smaa', godrays: true, pipScopes: true, anisotropy: 16,
+    ao: true, bloom: true, antialias: 'smaa', godrays: true, pipScopes: false, anisotropy: 16,
   },
 };
 
@@ -29,10 +29,15 @@ export const SETTING_OPTIONS = {
   crosshair: ['default', 'dot', 'cross', 'circle'],
 };
 
+// Bumped when defaults change in a way saved settings should pick up (v2: lighter presets,
+// dynamic resolution, full-screen scopes).
+const SETTINGS_VERSION = 2;
+
 export function defaultSettings() {
   return {
+    version: SETTINGS_VERSION,
     playerName: 'Operator' + Math.floor(100 + Math.random() * 900),
-    graphics: { preset: 'high', ...GRAPHICS_PRESETS.high, fpsLimit: 0, showFps: false },
+    graphics: { preset: 'medium', ...GRAPHICS_PRESETS.medium, fpsLimit: 0, showFps: false, dynamicRes: true },
     controls: { sensitivity: 1.0, adsSensitivity: 0.8, invertY: false, toggleAds: false, toggleCrouch: true },
     audio: { master: 0.8, sfx: 1.0, ambient: 0.6, ui: 0.8 },
     gameplay: { fov: 90, crosshair: 'default', crosshairColor: '#ffffff', showMinimap: true, headBob: true },
@@ -63,7 +68,16 @@ function deepMerge(base, over) {
 }
 
 export function loadSettings() {
-  return deepMerge(defaultSettings(), safeGet(KEY_SETTINGS));
+  const saved = safeGet(KEY_SETTINGS);
+  let s = deepMerge(defaultSettings(), saved);
+  if (saved && (saved.version || 1) < SETTINGS_VERSION) {
+    // 'high' was the old default and too heavy for most machines: move it (and custom) to medium.
+    const preset = s.graphics.preset === 'low' || s.graphics.preset === 'ultra' ? s.graphics.preset : 'medium';
+    s = applyPreset(s, preset);
+    s.graphics.dynamicRes = true;
+  }
+  s.version = SETTINGS_VERSION;
+  return s;
 }
 
 export function saveSettings(settings) {

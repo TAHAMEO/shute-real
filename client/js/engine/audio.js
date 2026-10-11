@@ -106,6 +106,7 @@ export class AudioEngine {
     this._ctx = null;
     this._bank = null;
     this._ready = false;
+    this._bankDone = false;
     this._failed = false;
     this._disposed = false;
     this._paused = false;
@@ -158,13 +159,23 @@ export class AudioEngine {
     try { await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 250))]); } catch { /* needs a gesture */ }
     const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     const t0 = performance.now();
-    const bank = await buildBank({ sampleRate: ctx.sampleRate, concurrency: clamp(cores, 2, 6), isCancelled: () => this._disposed });
+    // The bank fills in progressively: sounds become playable as soon as their own buffers exist
+    // (UI first, then guns), instead of everything staying silent until the whole bank is done.
+    const attachIRs = (b) => {
+      try { if (b.ir.outdoor && !this._convOut.buffer) this._convOut.buffer = b.ir.outdoor; } catch (e) { console.warn('[audio] outdoor IR', e); }
+      try { if (b.ir.indoor && !this._convIn.buffer) this._convIn.buffer = b.ir.indoor; } catch (e) { console.warn('[audio] indoor IR', e); }
+    };
+    const bank = await buildBank({
+      sampleRate: ctx.sampleRate, concurrency: clamp(cores, 2, 6), isCancelled: () => this._disposed,
+      onBank: (b) => { if (!this._disposed) { this._bank = b; this._ready = true; } },
+      onProgress: () => { if (this._bank) attachIRs(this._bank); },
+    });
     if (this._disposed) return;
     this._bank = bank;
     this._bankMs = Math.round(performance.now() - t0);
-    try { this._convOut.buffer = bank.ir.outdoor; } catch (e) { console.warn('[audio] outdoor IR', e); }
-    try { this._convIn.buffer = bank.ir.indoor; } catch (e) { console.warn('[audio] indoor IR', e); }
+    attachIRs(bank);
     this._ready = true;
+    this._bankDone = true;
     if (this._pendingAmbient) { const p = this._pendingAmbient; this._pendingAmbient = null; this.startAmbient(p); }
     if (this._lowHealth > 0) this.setLowHealth(this._lowHealth);
   }
@@ -297,7 +308,7 @@ export class AudioEngine {
         const buf = this._pick(sup ? set.s : set.n, `gun.${name}.${sup}`);
         this._voice(buf, {
           cat: 'gun', wide: true, gain: 0.9 * dbToGain(rnd(-0.8, 0.8)), rate: 1 + rnd(-0.015, 0.015), eq: jitterEq(),
-          send: (indoor ? 0.12 : 0.42) * P.tail * (sup ? 0.4 : 1), sendIn: indoor ? 0.6 * (sup ? 0.45 : 1) : 0,
+          send: (indoor ? 0.1 : 0.26) * P.tail * (sup ? 0.4 : 1), sendIn: indoor ? 0.5 * (sup ? 0.45 : 1) : 0,
         });
         return;
       }
@@ -563,7 +574,7 @@ export class AudioEngine {
   startAmbient(preset) {
     try {
       const name = AMBIENT[preset] ? preset : 'valley';
-      if (!this._ready) { this._pendingAmbient = name; return; }
+      if (!this._bankDone) { this._pendingAmbient = name; return; }
       if (this._amb && this._amb.preset === name) return;
       this.stopAmbient();
       const ctx = this._ctx; const B = this._bank; const cfg = AMBIENT[name]; const t = ctx.currentTime;

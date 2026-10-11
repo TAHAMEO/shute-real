@@ -438,7 +438,7 @@ function normEnergy(chans, e = 1) {
 }
 
 /** One channel of the outdoor impulse response (see outdoorIR). */
-export function outdoorIRChannel(sr, rng, c, { dur = 2.6, rt60 = 2.4 } = {}) {
+export function outdoorIRChannel(sr, rng, c, { dur = 1.5, rt60 = 1.3 } = {}) {
   const h = new Float32Array(Math.ceil(dur * sr));
   const taps = [0.011, 0.017, 0.024, 0.033, 0.045, 0.058, 0.074, 0.093, 0.117, 0.146, 0.18];
   taps.forEach((t, k) => {
@@ -447,7 +447,7 @@ export function outdoorIRChannel(sr, rng, c, { dur = 2.6, rt60 = 2.4 } = {}) {
     smearTap(h, sr, rng, tt, amp, 0.0004 + k * 0.0003, 9000 - k * 600);
   });
   // dull, smeared slap-backs from tree lines / terrain
-  [[0.27, 0.13], [0.44, 0.1], [0.71, 0.075], [1.08, 0.05], [1.55, 0.032]].forEach(([t, a], k) => {
+  [[0.27, 0.13], [0.44, 0.1], [0.71, 0.075], [1.08, 0.05]].forEach(([t, a], k) => {
     smearTap(h, sr, rng, t * rng.range(0.9, 1.12) + c * 0.004, a * rng.range(0.7, 1.2), 0.03 + k * 0.018, 1700 - k * 250, 0, 0.012 + k * 0.006);
   });
   diffuseTail(h, sr, rng, { start: 0.008, build: 0.07, rt60: rt60 * rng.range(0.95, 1.05), amp: 0.16, fHi: 5200, fLo: 420, fTau: 0.38 });
@@ -1574,7 +1574,7 @@ const GUN_REF_DB = -14; // K-weighted loudness of the first 100 ms for profile l
  * @param {{ sampleRate: number, concurrency?: number, onProgress?: (done:number,total:number)=>void, isCancelled?: ()=>boolean }} opts
  * @returns {Promise<object>} bank with nested AudioBuffers, `meta` (WeakMap buffer->{name,peakDb,loudDb}) and `stats`.
  */
-export async function buildBank({ sampleRate, concurrency = 4, onProgress = null, isCancelled = null } = {}) {
+export async function buildBank({ sampleRate, concurrency = 4, onProgress = null, onBank = null, isCancelled = null } = {}) {
   const t0 = now();
   const ctxRate = sampleRate || 48000;
   const hi = Math.min(48000, ctxRate); const lo = Math.round(hi / 2); const far = 11025;
@@ -1583,6 +1583,9 @@ export async function buildBank({ sampleRate, concurrency = 4, onProgress = null
     hurt: { local: [], remote: [] }, explosion: { near: [], far: [] }, gear: [], jump: [], land: [], rustle: [],
     rockfall: [], heart: null, smoke: null, wind: null, insects: null, ir: {}, meta: new WeakMap(), stats: {},
   };
+  // Hand out the (still empty) bank right away: it fills in as jobs finish, so sounds that are
+  // already synthesised (UI, then guns) can play while the rest is still being built.
+  if (onBank) { try { onBank(bank); } catch { /* ignore */ } }
   const jobs = [];
   const job = (name, sr, dur, recipe, put, norm) => jobs.push({ name, sr, dur, recipe, put, norm });
   const arr = (o, k) => (o[k] = o[k] || []);

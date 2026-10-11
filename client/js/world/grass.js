@@ -115,13 +115,27 @@ function makeMaterial(shared, patch) {
         vec2 rel = mod(aOffset - uCamPos.xz + S * 0.5, S) - S * 0.5;
         vec2 wp = uCamPos.xz + rel;
         float dist = length(rel);
+        float fade = smoothstep(uPatch.y * 0.85, uPatch.y, dist) * (1.0 - smoothstep(uPatch.z, uPatch.w, dist));
+        if (uBlade.w < 0.5) fade = 1.0 - smoothstep(uPatch.z, uPatch.w, dist);
+        float ground = terrainH(wp);
+        // Cheap per-blade culling before the expensive part: faded-out and off-screen blades
+        // collapse to a degenerate point (zero-area triangles are never rasterised).
+        vec4 cp = projectionMatrix * viewMatrix * vec4(wp.x, ground + 0.4, wp.y, 1.0);
+        float onScreen = step(-1.5, cp.w) * step(abs(cp.x), cp.w * 1.05 + 1.2) * step(abs(cp.y), cp.w * 1.05 + 1.6);
+        vec3 objectNormal = vec3(0.0, 1.0, 0.0);
+        #ifdef USE_TANGENT
+          vec3 objectTangent = vec3(1.0, 0.0, 0.0);
+        #endif
+        gPos = vec3(uCamPos.x, -1.0e5, uCamPos.z);
+        vGrassCol = vec3(0.0);
+        vGrassT = 0.0;
+        if (fade * onScreen > 0.0) {
         vec4 gm = texture2D(tGround, (wp + uTerrain.x) / uTerrain.w);
         float macro = vfbm(wp * 0.03);
         float dens = gm.a * uDensity * (0.55 + macro * 0.9) * uBlade.z;
         float alive = step(aRand.x, dens);
-        float fade = smoothstep(uPatch.y * 0.85, uPatch.y, dist) * (1.0 - smoothstep(uPatch.z, uPatch.w, dist));
-        if (uBlade.w < 0.5) fade = 1.0 - smoothstep(uPatch.z, uPatch.w, dist);
         float scale = alive * fade;
+        if (scale > 0.0) {
         float h = uBlade.x * (0.45 + aRand.y * 0.85) * (0.75 + macro * 0.5) * scale;
         float w = uBlade.y * (0.65 + aRand.z * 0.7);
         float ang = aRand.w * 6.2831853;
@@ -135,7 +149,6 @@ function makeMaterial(shared, patch) {
         float sway = (0.2 + 0.8 * gust) * uWind.z;
         float flutter = sin(uTime * (2.5 + aRand.x * 2.0) + aRand.y * 40.0 + wp.x * 0.3) * 0.12 * uWind.z;
         vec2 windOff = uWind.xy * (sway + flutter) * t * t * h * 0.9;
-        float ground = terrainH(wp);
         vec3 p = vec3(wp.x, ground, wp.y);
         p.xz += side * position.x * width + fw * bend + windOff;
         p.y += t * h * (1.0 - 0.25 * (sway + 0.3) * t);
@@ -143,15 +156,14 @@ function makeMaterial(shared, patch) {
         // Foliage lighting trick: tilt normals toward the sun (plus per-blade variation) so a low
         // sun still lights the field; real shadows still darken blades through the shadow map.
         vec3 sunH = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + 1e-4);
-        vec3 objectNormal = normalize(vec3(0.0, 1.0, 0.0) + sunH * 0.55 + vec3(fw.x, 0.0, fw.y) * 0.35);
-        #ifdef USE_TANGENT
-          vec3 objectTangent = vec3(1.0, 0.0, 0.0);
-        #endif
+        objectNormal = normalize(vec3(0.0, 1.0, 0.0) + sunH * 0.55 + vec3(fw.x, 0.0, fw.y) * 0.35);
         // Colour: base -> tip with dry/green variation.
         float dry = clamp(uDryness + (macro - 0.5) * 0.9 + (aRand.x - 0.5) * 0.5, 0.0, 1.0);
         vec3 tip = mix(uColTip, uColDry, dry * 0.8);
         vGrassCol = mix(uColBase * (0.55 + 0.25 * aRand.z), tip, smoothstep(0.0, 1.0, t));
         vGrassT = t;
+        }
+        }
       `)
       .replace('#include <begin_vertex>', 'vec3 transformed = gPos;');
     shader.fragmentShader = shader.fragmentShader
@@ -178,7 +190,7 @@ function makeMaterial(shared, patch) {
         #include <opaque_fragment>
       `);
   };
-  mat.customProgramCacheKey = () => 'grass-v1-' + (patch.far ? 'far' : 'near');
+  mat.customProgramCacheKey = () => 'grass-v2-' + (patch.far ? 'far' : 'near');
   return mat;
 }
 

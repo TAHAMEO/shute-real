@@ -164,7 +164,14 @@ export class Game {
     this.settings = s;
     if (save) saveSettings(s);
     const g = s.graphics;
-    this.rs.setQuality({ renderScale: g.renderScale, ao: g.ao, bloom: g.bloom, antialias: g.antialias, godrays: g.godrays, shadows: g.shadows });
+    const dpr = window.devicePixelRatio || 1;
+    const maxPr = { low: 1, medium: 1, high: 1.5, ultra: 2 }[g.preset] || 1;
+    this.rs.setQuality({
+      renderScale: g.renderScale, ao: g.ao, bloom: g.bloom, antialias: g.antialias, godrays: g.godrays, shadows: g.shadows,
+      pixelRatio: Math.min(dpr, maxPr), shadowEvery: g.shadows === 'ultra' ? 1 : 2,
+    });
+    if (!g.dynamicRes) this.rs.setDynamicScale(1);
+    this._dyn = { acc: 0, frames: 0, worst: 0, cooldown: 1.5 };
     this.view?.setQuality(g);
     this._applyFov();
     this.audio?.setVolumes(s.audio);
@@ -387,6 +394,7 @@ export class Game {
     this.rs.fx.lowHealth = 0;
     this.rs.fx.damage = 0;
     this.rs.fx.scope = 0;
+    this.rs.fx.hideViewmodel = false;
   }
 
   _quit() {
@@ -609,6 +617,7 @@ export class Game {
     this.viewmodel.setVisible(false);
     this.weapons.adsAmount = 0;
     this.rs.fx.scope = 0;
+    this.rs.fx.hideViewmodel = false;
     const b = this.player.body;
     const eye = new THREE.Vector3(b.x, b.y + this.player.eyeY, b.z);
     this.deathCam = { t: 0, from: eye, target: killerPos ? new THREE.Vector3(killerPos.x, (killerPos.y || 0) + 1.4, killerPos.z) : eye.clone().add(new THREE.Vector3(0, -1, -1)) };
@@ -669,8 +678,10 @@ export class Game {
     requestAnimationFrame((t) => this._frame(t));
     const lim = this.settings.graphics.fpsLimit;
     if (lim > 0 && nowMs - this.lastFrame < 1000 / lim - 1) return;
-    const dt = Math.min(0.1, Math.max(0.0005, (nowMs - this.lastFrame) / 1000));
+    const rawDt = Math.max(0.0005, (nowMs - this.lastFrame) / 1000);
+    const dt = Math.min(0.1, rawDt);
     this.lastFrame = nowMs;
+    this._updateDynamicRes(Math.min(1, rawDt)); // real frame time (dt is clamped for the simulation)
     this._fpsAcc += dt;
     this._fpsFrames++;
     if (this._fpsAcc >= 0.5) {
@@ -688,6 +699,50 @@ export class Game {
       console.error(e);
     }
     this.input.endFrame();
+  }
+
+  /**
+   * Dynamic resolution: every ~0.75 s compare the average frame time with the target (the FPS
+   * limit, or 60) and nudge the scene's render scale down quickly / up slowly.
+   */
+  _updateDynamicRes(dt) {
+    const g = this.settings.graphics;
+    const d = this._dyn;
+    if (!d || !g.dynamicRes || document.hidden) return;
+    d.acc += dt;
+    d.frames++;
+    if (d.cooldown > 0) { d.cooldown -= dt; if (d.cooldown <= 0) { d.acc = 0; d.frames = 0; } return; }
+    if (d.acc < 0.75) return;
+    const avg = d.acc / d.frames;
+    d.acc = 0;
+    d.frames = 0;
+    const targetFps = g.fpsLimit > 0 ? Math.min(g.fpsLimit, 60) : 60;
+    const budget = 1 / targetFps;
+    const cur = this.rs.dynScale;
+    let next = cur;
+    if (avg > budget * 1.12) next = cur * Math.max(0.8, Math.sqrt(budget / avg)); // pixels scale with s^2
+    else if (avg < budget * 0.8) next = cur + 0.05;
+    // never drop below half the screen resolution overall
+    next = Math.min(1, Math.max(Math.max(0.55, 0.5 / Math.max(0.5, g.renderScale)), next));
+    if (Math.abs(next - cur) >= 0.02) {
+      this.rs.setDynamicScale(next);
+      d.cooldown = 0.4; // let the new resolution settle before measuring again
+    }
+  }
+
+  /** Aim zoom for the current weapon: { zoom, scope } where scope (0..1) fades in the full-screen scope view. */
+  _aimZoom() {
+    const slot = this.weapons?.slot;
+    if (!slot) return { zoom: 1, scope: 0 };
+    const a = this.weapons.adsAmount;
+    let zoom = 1 + (slot.h.zoom - 1) * a;
+    let scope = 0;
+    if (slot.h.pip && slot.h.magnification > 1 && !this.settings.graphics.pipScopes && this.alive) {
+      const t = Math.min(1, Math.max(0, (a - 0.55) / 0.4));
+      scope = t * t * (3 - 2 * t);
+      zoom += (slot.h.magnification - zoom) * scope;
+    }
+    return { zoom, scope };
   }
 
   _updateMenu(dt) {
@@ -734,7 +789,7 @@ export class Game {
     // ---- look + controls
     const mouse = inp.takeMouse();
     if (active) {
-      const zoom = this.weapons.slot ? 1 + (this.weapons.slot.h.zoom - 1) * this.weapons.adsAmount : 1;
+      const { zoom } = this._aimZoom();
       const adsSens = 1 + (this.settings.controls.adsSensitivity - 1) * this.weapons.adsAmount;
       p.look(mouse.dx, mouse.dy, this.settings.controls.sensitivity * adsSens / zoom, this.settings.controls.invertY);
       p.readControls(inp, this.settings, this.weapons.adsAmount > 0.2 || inp.mouseDown(0));
@@ -748,9 +803,7 @@ export class Game {
       this.weapons.update(dt, active);
       this.weapons.postUpdate();
       // FOV zoom while aiming.
-      const slot = this.weapons.slot;
-      const zoom = slot ? 1 + (slot.h.zoom - 1) * this.weapons.adsAmount : 1;
-      this._applyFov(zoom);
+      this._applyFov(this._aimZoom().zoom);
       p.applyCamera(this.rs.camera, dt);
       // Network input at 30 Hz.
       this.inputAcc += dt;
@@ -779,9 +832,12 @@ export class Game {
     this.rs.fx.damage = Math.max(0, this.rs.fx.damage - dt * 1.4);
     this.rs.fx.flash = Math.max(0, this.rs.fx.flash - dt * 0.8);
     this.rs.fx.aberration += (0.015 - this.rs.fx.aberration) * Math.min(1, dt * 3);
-    // Scope tunnel (no PiP) / magnified optic overlay.
+    // Full-screen magnified scope (when picture-in-picture scopes are off).
     const slot = this.weapons.slot;
-    this.rs.fx.scope = slot && slot.h.pip && this.alive ? Math.max(0, this.weapons.adsAmount - 0.7) * 1.2 : 0;
+    const aim = this._aimZoom();
+    this.rs.fx.scope = aim.scope;
+    this.rs.fx.reticle = slot?.att?.optic === 'acog' ? 0 : slot?.att?.optic === 'pso' ? 1 : 2;
+    this.rs.fx.hideViewmodel = aim.scope > 0.5;
 
     // ---- world + entities
     const cam = this.rs.camera;

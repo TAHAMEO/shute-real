@@ -167,10 +167,66 @@ uniform float uDamage;     // red edge flash
 uniform float uLowHealth;  // desaturate + pulse
 uniform float uFlash;      // white flash (explosions, flashbang)
 uniform float uAberration;
-uniform float uScope;      // tunnel vignette when using magnified optics
+uniform float uScope;      // 0..1 full-screen magnified scope view
+uniform float uReticle;    // 0 ACOG, 1 PSO, 2 sniper
+uniform float uSharpen;    // upscale sharpening strength (render scale < 1)
+uniform vec2 uTexel;       // 1 / source size
 uniform vec2 uResolution;
 ${GLSL_TONEMAP}
 float rand(vec2 co) { return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453); }
+vec3 compress(vec3 x) { return x / (1.0 + x); }
+// Anti-aliased line of width w (screen-height units) at signed distance d.
+float aline(float d, float w, float px) { return 1.0 - smoothstep(w * 0.5, w * 0.5 + px, abs(d)); }
+
+// Scope reticles in screen-height units centred on the screen. Returns (rgb, alpha).
+vec4 reticle(vec2 p, float px) {
+  float w = px * 1.4;
+  vec3 ink = vec3(0.0);
+  float a = 0.0;
+  vec3 glow = vec3(0.0);
+  float ga = 0.0;
+  if (uReticle < 0.5) {
+    // ACOG: illuminated red chevron + bullet-drop stadia.
+    float chev = aline((p.y + abs(p.x) * 1.15) * 0.66, w * 1.6, px) * step(abs(p.x), 0.022) * step(-0.026, p.y) * step(p.y, 0.001);
+    glow = vec3(1.0, 0.12, 0.05); ga = chev;
+    float stem = aline(p.x, w, px) * step(p.y, -0.04) * step(-0.30, p.y);
+    float ticks = 0.0;
+    for (int i = 1; i < 6; i++) {
+      float y = -0.04 - 0.045 * float(i);
+      ticks += aline(p.y - y, w, px) * step(abs(p.x), 0.026 - 0.003 * float(i));
+    }
+    a = clamp(stem + ticks, 0.0, 1.0);
+  } else if (uReticle < 1.5) {
+    // PSO-1: main chevron, three hold-over chevrons, horizontal windage scale.
+    float chev = 0.0;
+    for (int i = 0; i < 4; i++) {
+      vec2 q = p - vec2(0.0, -0.055 * float(i));
+      float s = i == 0 ? 0.02 : 0.013;
+      chev += aline((q.y + abs(q.x) * 1.1) * 0.67, w * (i == 0 ? 1.6 : 1.2), px) * step(abs(q.x), s) * step(-s * 1.1, q.y) * step(q.y, 0.001);
+    }
+    float h = aline(p.y, w, px) * step(0.03, abs(p.x)) * step(abs(p.x), 0.2);
+    float ticks = 0.0;
+    for (int i = 1; i < 6; i++) ticks += aline(abs(p.x) - 0.03 * float(i) - 0.005, w, px) * step(0.0, p.y) * step(p.y, i == 5 ? 0.02 : 0.01);
+    a = clamp(chev + h + ticks, 0.0, 1.0);
+    glow = vec3(0.9, 0.15, 0.06); ga = clamp(chev, 0.0, 1.0) * 0.6;
+  } else {
+    // Sniper: thin mil-dot crosshair with heavy duplex posts toward the edge.
+    float thin = (aline(p.x, w, px) + aline(p.y, w, px)) * step(max(abs(p.x), abs(p.y)), 0.16);
+    float post = aline(p.x, w * 5.0, px) * step(0.16, abs(p.y)) + aline(p.y, w * 5.0, px) * step(0.16, abs(p.x));
+    float dots = 0.0;
+    for (int i = 1; i < 5; i++) {
+      float o = 0.032 * float(i);
+      dots += 1.0 - smoothstep(w * 1.6, w * 1.6 + px, length(vec2(abs(p.x) - o, p.y)));
+      dots += 1.0 - smoothstep(w * 1.6, w * 1.6 + px, length(vec2(p.x, abs(p.y) - o)));
+    }
+    a = clamp(thin + post + dots, 0.0, 1.0);
+    float c = 1.0 - smoothstep(w * 1.1, w * 1.1 + px, length(p));
+    glow = vec3(1.0, 0.1, 0.05); ga = c;
+  }
+  vec3 rgb = mix(ink, glow, ga);
+  return vec4(rgb, max(a, ga));
+}
+
 void main() {
   vec2 uv = vUv;
   vec2 c = uv - 0.5;
@@ -183,6 +239,14 @@ void main() {
     col.b = texture2D(tColor, uv + c * ab).b;
   } else {
     col = texture2D(tColor, uv).rgb;
+  }
+  if (uSharpen > 0.0) {
+    // Contrast-limited unsharp mask in a compressed range (HDR-safe), restores detail lost to upscaling.
+    vec3 c0 = compress(texture2D(tColor, uv).rgb);
+    vec3 nb = compress(texture2D(tColor, uv + vec2(uTexel.x, 0.0)).rgb) + compress(texture2D(tColor, uv - vec2(uTexel.x, 0.0)).rgb)
+            + compress(texture2D(tColor, uv + vec2(0.0, uTexel.y)).rgb) + compress(texture2D(tColor, uv - vec2(0.0, uTexel.y)).rgb);
+    vec3 sh = clamp(c0 + (c0 * 4.0 - nb) * uSharpen * 0.25, 0.0, 0.995);
+    col = max(col + sh / (1.0 - sh) - c0 / (1.0 - c0), vec3(0.0));
   }
   col *= uExposure;
   col = acesFilmic(col);
@@ -200,10 +264,22 @@ void main() {
   float pulse = 0.65 + 0.35 * sin(uTime * 6.0);
   col = mix(col, vec3(0.45, 0.0, 0.0), edge * clamp(uDamage * 0.75 + uLowHealth * 0.55 * pulse, 0.0, 0.85));
   col = mix(col, vec3(1.0), uFlash);
-  // scope tunnel
-  col *= 1.0 - smoothstep(0.08, 0.4, r2) * uScope;
   col = clamp(col, 0.0, 1.0);
   col = linearToSRGB(col);
+  if (uScope > 0.0) {
+    // Full-screen scope: round lens with a dark rim, reticle, black surround.
+    float px = 1.0 / uResolution.y;
+    vec2 p = c * vec2(uResolution.x / uResolution.y, 1.0);
+    float r = length(p);
+    float R = 0.475;
+    float lens = 1.0 - smoothstep(R - 1.5 * px, R + 1.5 * px, r);
+    vec3 sc = col * (1.0 - 0.6 * smoothstep(R * 0.72, R, r));
+    vec4 ret = reticle(p, px);
+    sc = mix(sc, ret.rgb, ret.a) * lens;
+    col = mix(col, sc, smoothstep(0.0, 0.35, uScope));
+    // brief dip to black while the eye moves to the scope
+    col *= 1.0 - 0.85 * sin(3.14159 * clamp(uScope, 0.0, 1.0)) * step(uScope, 0.999);
+  }
   // film grain
   float g = rand(uv * uResolution + fract(uTime * 7.13) * 100.0) - 0.5;
   col += g * uGrain;
@@ -231,6 +307,7 @@ export class RenderSystem {
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.autoUpdate = false; // refreshed explicitly in render() (see quality.shadowEvery)
     renderer.autoClear = false;
     this.renderer = renderer;
     this.gl = renderer.getContext();
@@ -245,7 +322,7 @@ export class RenderSystem {
     this.skyFogScene = null; // set by the sky system (sky without clouds for aerial fog)
 
     this.quality = {
-      renderScale: 1, ao: true, bloom: true, antialias: 'smaa', godrays: true, shadows: 'high', pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      renderScale: 1, ao: true, bloom: true, antialias: 'smaa', godrays: true, shadows: 'high', pixelRatio: 1, shadowEvery: 1,
     };
     this.env = {
       sunDir: new THREE.Vector3(0.3, 0.5, -0.8).normalize(),
@@ -266,7 +343,9 @@ export class RenderSystem {
       grain: 0.018,
       aoStrength: 0.85,
     };
-    this.fx = { damage: 0, lowHealth: 0, flash: 0, aberration: 0.015, scope: 0 };
+    this.fx = { damage: 0, lowHealth: 0, flash: 0, aberration: 0.015, scope: 0, reticle: 2, hideViewmodel: false };
+    this.dynScale = 1;     // dynamic-resolution multiplier on top of quality.renderScale
+    this._frameNo = 0;
     this.time = 0;
     this.width = 1;
     this.height = 1;
@@ -328,7 +407,8 @@ export class RenderSystem {
       uniforms: {
         tColor: { value: null }, uExposure: { value: 1 }, uSaturation: { value: 1 }, uContrast: { value: 1 }, uTint: { value: new THREE.Color(1, 1, 1) },
         uVignette: { value: 0.3 }, uGrain: { value: 0.02 }, uTime: { value: 0 }, uDamage: { value: 0 }, uLowHealth: { value: 0 },
-        uFlash: { value: 0 }, uAberration: { value: 0.1 }, uScope: { value: 0 }, uResolution: { value: new THREE.Vector2(1, 1) },
+        uFlash: { value: 0 }, uAberration: { value: 0.1 }, uScope: { value: 0 }, uReticle: { value: 2 }, uSharpen: { value: 0 },
+        uTexel: { value: new THREE.Vector2(1, 1) }, uResolution: { value: new THREE.Vector2(1, 1) },
       },
     });
     this.quad = new FullScreenQuad(null);
@@ -356,12 +436,24 @@ export class RenderSystem {
     return this.gtao;
   }
 
-  /** Apply graphics settings ({ renderScale, ao, bloom, antialias, godrays, shadows }). */
+  /** Apply graphics settings ({ renderScale, ao, bloom, antialias, godrays, shadows, pixelRatio, shadowEvery }). */
   setQuality(q) {
     Object.assign(this.quality, q);
     this.renderer.shadowMap.enabled = this.quality.shadows !== 'off';
+    this.renderer.shadowMap.needsUpdate = true;
     this.setSize(this.width, this.height);
   }
+
+  /** Dynamic resolution: scale the 3D scene below quality.renderScale (0.5..1). Cheap no-op if unchanged. */
+  setDynamicScale(s) {
+    s = Math.min(1, Math.max(0.5, s));
+    if (Math.abs(s - this.dynScale) < 0.01) return;
+    this.dynScale = s;
+    this.setSize(this.width, this.height);
+  }
+
+  /** Effective scene resolution relative to the output (renderScale * dynamic scale). */
+  get effectiveScale() { return this.quality.renderScale * this.dynScale; }
 
   setSize(w, h) {
     this.width = Math.max(1, Math.floor(w));
@@ -369,7 +461,7 @@ export class RenderSystem {
     const pr = this.quality.pixelRatio;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(this.width, this.height, false);
-    const scale = this.quality.renderScale * pr;
+    const scale = this.quality.renderScale * this.dynScale * pr;
     const rw = Math.max(1, Math.round(this.width * scale));
     const rh = Math.max(1, Math.round(this.height * scale));
     this.rw = rw;
@@ -390,6 +482,9 @@ export class RenderSystem {
     this.smaa.setSize(fw, fh);
     this.fxaa.setSize(fw, fh);
     this.finalMat.uniforms.uResolution.value.set(fw, fh);
+    this.finalMat.uniforms.uTexel.value.set(1 / rw, 1 / rh);
+    // Sharpen in proportion to how much the scene is upscaled to the screen.
+    this.finalMat.uniforms.uSharpen.value = Math.min(0.5, 0.15 + Math.max(0, 1 - rw / fw) * 0.8);
   }
 
   _setCompositeUniforms(camera, sceneRT, aoTex, raysTex, skyTex) {
@@ -437,10 +532,8 @@ export class RenderSystem {
     r.setRenderTarget(this.rtScopeScene);
     r.setClearColor(0x000000, 1);
     r.clear(true, true, false);
-    const prevShadow = r.shadowMap.autoUpdate;
-    r.shadowMap.autoUpdate = false; // reuse this frame's shadow maps
+    r.shadowMap.needsUpdate = false; // reuse this frame's shadow maps
     r.render(this.scene, scopeCamera);
-    r.shadowMap.autoUpdate = prevShadow;
     let skyTex = null;
     if (this.skyFogScene) {
       r.setRenderTarget(this.rtScopeSky);
@@ -473,7 +566,10 @@ export class RenderSystem {
     this.time += dt;
     this.camera.updateMatrixWorld();
 
-    // 1) World.
+    // 1) World. Sun shadows are refreshed every `shadowEvery` frames (the map and its matrix stay
+    // consistent in between, so skipped frames just reuse a slightly older shadow).
+    this._frameNo++;
+    if (this._frameNo % Math.max(1, q.shadowEvery | 0) === 0) r.shadowMap.needsUpdate = true;
     r.setRenderTarget(this.rtScene);
     r.setClearColor(0x000000, 1);
     r.clear(true, true, false);
@@ -528,13 +624,12 @@ export class RenderSystem {
     if (raysTex) this.compositeMat.uniforms.uRaysColor.value.multiplyScalar(this._raysVis);
     this._blit(this.compositeMat, this.rtComp);
 
-    // 6) Viewmodel on top (own depth).
-    r.setRenderTarget(this.rtComp);
-    r.clearDepth();
-    const prevShadow = r.shadowMap.autoUpdate;
-    r.shadowMap.autoUpdate = false;
-    r.render(this.vmScene, this.vmCamera);
-    r.shadowMap.autoUpdate = prevShadow;
+    // 6) Viewmodel on top (own depth). Hidden while looking through a full-screen scope.
+    if (!this.fx.hideViewmodel) {
+      r.setRenderTarget(this.rtComp);
+      r.clearDepth();
+      r.render(this.vmScene, this.vmCamera);
+    }
 
     // 7) Bloom (adds onto rtComp).
     if (q.bloom) {
@@ -558,6 +653,7 @@ export class RenderSystem {
     f.uFlash.value = this.fx.flash;
     f.uAberration.value = this.fx.aberration;
     f.uScope.value = this.fx.scope;
+    f.uReticle.value = this.fx.reticle;
     const aa = q.antialias;
     if (aa === 'smaa') {
       this._blit(this.finalMat, this.rtLDR);

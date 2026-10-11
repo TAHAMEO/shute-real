@@ -26,12 +26,15 @@ const IMPOSTOR_VIEWS = 8;
 const MAX_IMPOSTOR_VARIANTS = SPECIES_LIST.length * TREE_VARIANTS;
 const NEAR_TRIANGLE_BUDGET = 5900;
 
-/** Quality presets (near tree distance, bush distance/density/shadows, impostor layer width). */
+/**
+ * Quality presets (near tree distance, bush distance/density/shadows, impostor layer width).
+ * offShadow: off-screen trees/bushes farther than this (m) from the camera don't cast shadows.
+ */
 export const VEGETATION_QUALITY = {
-  low: { treeNear: 80, treeFar: 900, bushFar: 50, bushDensity: 0.3, bushShadows: false, impostorRes: 48, texSize: 256, aniso: 2 },
-  medium: { treeNear: 110, treeFar: 1200, bushFar: 75, bushDensity: 0.6, bushShadows: false, impostorRes: 64, texSize: 256, aniso: 4 },
-  high: { treeNear: 150, treeFar: 1500, bushFar: 100, bushDensity: 1.0, bushShadows: true, impostorRes: 96, texSize: 512, aniso: 8 },
-  ultra: { treeNear: 200, treeFar: 1800, bushFar: 120, bushDensity: 1.0, bushShadows: true, impostorRes: 128, texSize: 512, aniso: 16 },
+  low: { treeNear: 80, treeFar: 900, bushFar: 50, bushDensity: 0.3, bushShadows: false, impostorRes: 48, texSize: 256, aniso: 2, offShadow: 35 },
+  medium: { treeNear: 110, treeFar: 1200, bushFar: 75, bushDensity: 0.6, bushShadows: false, impostorRes: 64, texSize: 256, aniso: 4, offShadow: 45 },
+  high: { treeNear: 150, treeFar: 1500, bushFar: 100, bushDensity: 1.0, bushShadows: true, impostorRes: 96, texSize: 512, aniso: 8, offShadow: 70 },
+  ultra: { treeNear: 200, treeFar: 1800, bushFar: 120, bushDensity: 1.0, bushShadows: true, impostorRes: 128, texSize: 512, aniso: 16, offShadow: 1e9 },
 };
 
 const TAU = Math.PI * 2;
@@ -1650,12 +1653,18 @@ export class VegetationSystem {
   _cull(states, data, camera) {
     const useShadow = !!this._shadowLight;
     const dirShadow = useShadow && this._shadowLight.isDirectionalLight;
+    // SunLight (cascaded): only trees inside a cascade's box (which already extends toward the sun
+    // for off-screen casters) can shadow the view. Uses the cascades of the last shadow update.
+    const sunFr = useShadow && this._shadowLight.isSunLight && this._shadowLight.shadow.getFrustum ? this._sunFrusta : null;
     let mainTotal = 0;
     let tris = 0;
     let calls = 0;
     let shadowCalls = 0;
     const { pos, mat, tint, scale } = data;
     const cull = this.frustumCulling;
+    const off = this.q.offShadow ?? 1e9;
+    const off2 = off * off;
+    const cx = this._camPos.x, cz = this._camPos.z;
     for (const s of states) {
       const { list, listN, info, mesh } = s;
       const mArr = mesh.instanceMatrix.array;
@@ -1675,7 +1684,9 @@ export class VegetationSystem {
         if (cull) inMain = sphereInFrustum(this._frustum, x, y, z, r);
         if (inMain) {
           this._copyInstance(mArr, tArr, main++, mat, tint, i);
-        } else if (useShadow && (!dirShadow || sphereInFrustum(this._shadowFrustum, x, y, z, r))) {
+        } else if (useShadow && (x - cx) * (x - cx) + (z - cz) * (z - cz) < off2 && (sunFr
+          ? sphereInFrustum(sunFr[0], x, y, z, r + 8) || sphereInFrustum(sunFr[1], x, y, z, r + 8)
+          : !dirShadow || sphereInFrustum(this._shadowFrustum, x, y, z, r))) {
           this._scratch2[extra++] = i;
         }
       }
@@ -1730,6 +1741,13 @@ export class VegetationSystem {
     _m4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this._frustum.setFromProjectionMatrix(_m4, camera.coordinateSystem, camera.reversedDepth);
     const light = this._shadowLight;
+    this._sunFrusta = null;
+    if (light && light.isSunLight && light.shadow.getFrustum) {
+      const f0 = light.shadow.getFrustum(0);
+      const f1 = light.shadow.getFrustum(1);
+      // before the first shadow update the cascade frusta are still default (identical) planes
+      if (f0 && f1 && !f1.planes[0].normal.equals(f1.planes[1].normal)) this._sunFrusta = [f0, f1];
+    }
     if (light && light.isDirectionalLight) {
       const sc = light.shadow.camera;
       light.updateWorldMatrix(true, false);
