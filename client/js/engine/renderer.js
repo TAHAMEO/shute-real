@@ -124,6 +124,32 @@ void main() {
 }
 `;
 
+// ------------------------------------------------------------------ bloom prefilter
+// Replaces UnrealBloomPass's high-pass: clamps HDR fireflies (the sky's sun disc is ~1e4) and
+// keeps only the brightness above the threshold (soft knee), so bright regions glow at their
+// edges instead of washing the whole screen out.
+const BLOOM_PREFILTER_FRAG = /* glsl */ `
+uniform sampler2D tDiffuse;
+uniform highp sampler2D tDepth;
+uniform float luminosityThreshold;
+uniform float smoothWidth;
+uniform float uMaxBright;
+uniform float uSkyMax;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tDiffuse, vUv).rgb;
+  // The sky near a low sun is far brighter than lit geometry: let it add only a soft glow.
+  float sky = step(0.99999, texture2D(tDepth, vUv).x);
+  c = min(c, vec3(mix(uMaxBright, uSkyMax, sky)));
+  float l = max(max(c.r, c.g), c.b);
+  float knee = max(smoothWidth, 1e-4);
+  float soft = clamp(l - luminosityThreshold + knee, 0.0, 2.0 * knee);
+  soft = soft * soft / (4.0 * knee);
+  float w = max(soft, l - luminosityThreshold) / max(l, 1e-4);
+  gl_FragColor = vec4(c * w, 1.0);
+}
+`;
+
 // ------------------------------------------------------------------ final grade
 const FINAL_FRAG = /* glsl */ `
 precision highp float;
@@ -305,7 +331,13 @@ export class RenderSystem {
     });
     this.quad = new FullScreenQuad(null);
     this.gtao = null;
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.55, 1.15);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.4, 0.55, 1.1);
+    const hp = this.bloom.materialHighPassFilter;
+    hp.uniforms.uMaxBright = { value: 10 };
+    hp.uniforms.uSkyMax = { value: 1.4 };
+    hp.uniforms.tDepth = { value: null };
+    hp.uniforms.smoothWidth.value = 0.5;
+    hp.fragmentShader = BLOOM_PREFILTER_FRAG;
     this.smaa = new SMAAPass();
     this.fxaa = new FXAAPass();
   }
@@ -502,7 +534,10 @@ export class RenderSystem {
     r.shadowMap.autoUpdate = prevShadow;
 
     // 7) Bloom (adds onto rtComp).
-    if (q.bloom) this.bloom.render(r, null, this.rtComp, dt, false);
+    if (q.bloom) {
+      this.bloom.highPassUniforms.tDepth.value = this.rtScene.depthTexture;
+      this.bloom.render(r, null, this.rtComp, dt, false);
+    }
 
     // 8) Tone map + grade.
     const f = this.finalMat.uniforms;

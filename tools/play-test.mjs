@@ -75,6 +75,30 @@ await page.screenshot({ path: `${out}/3-fire.png`, timeout: 300000 });
 await page.evaluate(() => { const g = window.__GAME; g.input.mouse.buttons = 0; });
 console.log('fire screenshot');
 await page.waitForTimeout(secs * 1000);
+// Look at the nearest visible bot for a close-up of the soldier models.
+const aimed = await page.evaluate(() => {
+  const g = window.__GAME;
+  const p = g.player.body;
+  let best = null, bd = Infinity;
+  for (const r of g.remotes.list) {
+    if (!r.alive || !r.model) continue;
+    const d = Math.hypot(r.pos.x - p.x, r.pos.z - p.z);
+    if (d < bd) { bd = d; best = r; }
+  }
+  if (!best) return null;
+  // Teleport near the bot (8 m away) and face it.
+  const dx = best.pos.x - p.x, dz = best.pos.z - p.z, l = Math.hypot(dx, dz) || 1;
+  const nx = best.pos.x - dx / l * 8, nz = best.pos.z - dz / l * 8;
+  g.player.body.x = nx; g.player.body.z = nz;
+  g.player.body.y = g.world.collision.groundHeight(nx, nz, 1e4, 0.3);
+  g.player.prev.set(g.player.body.x, g.player.body.y, g.player.body.z);
+  g.player.yaw = Math.atan2(-(best.pos.x - nx), -(best.pos.z - nz));
+  g.player.pitch = -0.05;
+  return { name: best.name, dist: bd.toFixed(0) };
+});
+console.log('aimed at', JSON.stringify(aimed));
+await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}/5-bot.png`, timeout: 300000 });
 const info = await page.evaluate(() => {
   const g = window.__GAME;
   return { state: g.state, alive: g.alive, hp: g.hp, pos: [g.player.body.x, g.player.body.y, g.player.body.z].map((v) => +v.toFixed(1)),

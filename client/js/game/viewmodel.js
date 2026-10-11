@@ -237,6 +237,17 @@ export class Viewmodel {
     if (a.cylinder && w.cylRest) a.cylinder.rotation.copy(w.cylRest);
   }
 
+  /** Copy an anchor's pose into a holder-space target object. */
+  _anchorToHolder(anchor, target) {
+    anchor.updateWorldMatrix(true, false);
+    anchor.getWorldPosition(target.position);
+    this.holder.worldToLocal(target.position);
+    anchor.getWorldQuaternion(target.quaternion);
+    this.holder.getWorldQuaternion(this._q);
+    target.quaternion.premultiply(this._q.invert());
+    target.updateMatrixWorld(true);
+  }
+
   lower(dur) { this.raiseTarget = 0; this._lowerSpeed = 1 / Math.max(0.05, dur); }
 
   onFire(suppressed) {
@@ -265,6 +276,9 @@ export class Viewmodel {
         this.game.effects.flashLight(this._v.x, this._v.y, this._v.z, 0xffb060, 18, 0.06, 9);
       }
     }
+    // Revolver: index the cylinder one chamber per shot.
+    const spin = a.cylinder?.getObjectByName?.('cylinderSpin');
+    if (spin) spin.rotation.z += Math.PI / 3;
     // Pistol slide / automatic bolt motion.
     if (a.bolt && def.category === 'PISTOL') this.anim = this.anim || { type: 'slide', t: 0, dur: 0.09, lock: this.game.weapons.slot.mag === 0 };
     // Shell ejection (world space).
@@ -415,6 +429,7 @@ export class Viewmodel {
     // ---- action animations
     const a = w.model.anchors;
     let leftOverride = null;
+    let leftGuard = null;
     let hideLeft = false;
     this.leftTarget.visible = false;
     const an = this.anim;
@@ -428,7 +443,8 @@ export class Viewmodel {
           const out = smooth(seg(u, 0.14, 0.3));
           const back = smooth(seg(u, 0.45, 0.62));
           const off = out * (1 - back);
-          a.magazine.position.set(w.magRest.x, w.magRest.y - off * 0.3, w.magRest.z + off * 0.05);
+          const dir = def.id === 'p90' ? 1 : -1;
+          a.magazine.position.set(w.magRest.x, w.magRest.y + dir * off * 0.3, w.magRest.z + off * 0.05);
           a.magazine.visible = !(u > 0.3 && u < 0.45);
           if (u > 0.18 && !an.events.has('out')) { an.events.add('out'); g.audio?.playMechanical('mag_out'); }
           if (u > 0.6 && !an.events.has('in')) { an.events.add('in'); g.audio?.playMechanical('mag_in'); }
@@ -436,6 +452,7 @@ export class Viewmodel {
           a.magazine.updateWorldMatrix(true, false);
           const handOnMag = seg(u, 0.1, 0.18) * (1 - seg(u, 0.66, 0.78));
           if (handOnMag > 0) {
+            if (a.leftHand) this._anchorToHolder(a.leftHand, this.leftTarget);
             a.magazine.getWorldPosition(this._tmp);
             this.holder.worldToLocal(this._tmp);
             this.leftTarget.position.copy(this._tmp);
@@ -445,7 +462,7 @@ export class Viewmodel {
         } else if (a.cylinder && w.cylRest) {
           // Revolver: swing the cylinder out.
           const open = smooth(seg(u, 0.1, 0.25)) * (1 - smooth(seg(u, 0.75, 0.9)));
-          a.cylinder.rotation.set(w.cylRest.x, w.cylRest.y, w.cylRest.z - open * 1.2);
+          a.cylinder.rotation.set(w.cylRest.x, w.cylRest.y, w.cylRest.z + open * 1.3);
           rz += open * 20 * DEG;
           if (u > 0.2 && !an.events.has('open')) { an.events.add('open'); g.audio?.playMechanical('cylinder_open'); }
           if (u > 0.78 && !an.events.has('close')) { an.events.add('close'); g.audio?.playMechanical('cylinder_close'); }
@@ -465,6 +482,7 @@ export class Viewmodel {
         }
         // Left hand moves between pocket and loading port.
         this.leftTarget.position.set(0.0, -0.08 - Math.abs(Math.sin(an.t * 6)) * 0.06, -0.12);
+        this.leftTarget.quaternion.identity();
         leftOverride = this.leftTarget;
         if (an.type === 'shellEnd' && u >= 1) this.anim = null;
       } else if (an.type === 'cycle') {
@@ -474,6 +492,13 @@ export class Viewmodel {
             const pull = Math.sin(uu * Math.PI);
             a.bolt.position.z = w.boltRest.z + pull * 0.09;
             oz += pull * 0.01;
+            if (a.leftHand) {
+              // The support hand keeps its handguard grip and rides the pump along the bore.
+              this._anchorToHolder(a.leftHand, this.leftTarget);
+              this.leftTarget.translateZ(pull * 0.09);
+              this.leftTarget.updateMatrixWorld(true);
+              leftGuard = this.leftTarget;
+            }
           } else {
             const up = smooth(seg(uu, 0, 0.2)) * (1 - smooth(seg(uu, 0.8, 1)));
             const back = Math.sin(seg(uu, 0.2, 0.8) * Math.PI);
@@ -536,11 +561,7 @@ export class Viewmodel {
         this.equipItem.root.updateMatrixWorld(true);
         right = this.equipItem.anchors.rightHand || this.equipItem.root;
       }
-      let left = a.leftHand;
-      if (an && an.type === 'cycle' && an.pump && left) {
-        // left hand rides the pump
-        left = a.bolt || left;
-      }
+      const left = leftGuard || a.leftHand;
       this.arms.update(right, hideLeft ? null : left, { leftOverride, dt });
     }
 

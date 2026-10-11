@@ -15,15 +15,30 @@ export class NetTransport {
     this.isLocal = false;
   }
 
-  /** Resolves once the socket is open. */
+  /**
+   * Resolves once the socket is open. Only time in which the page was responsive counts toward
+   * the timeout: while the main thread is blocked (shader compilation, building a map) the open
+   * event cannot be delivered, and a wall-clock timer would report a running server as offline.
+   */
   connect(timeoutMs = 6000) {
     return new Promise((resolve, reject) => {
       let done = false;
       const ws = new WebSocket(this.url);
       this.ws = ws;
-      const timer = setTimeout(() => { if (!done) { done = true; try { ws.close(); } catch { /* ignore */ } reject(new Error('Connection timed out')); } }, timeoutMs);
-      ws.onopen = () => { if (done) return; done = true; clearTimeout(timer); resolve(this); };
-      ws.onerror = () => { if (done) return; done = true; clearTimeout(timer); reject(new Error('Could not connect to ' + this.url)); };
+      let waited = 0;
+      let last = performance.now();
+      const timer = setInterval(() => {
+        const now = performance.now();
+        waited += Math.min(now - last, 500);
+        last = now;
+        if (done || waited < timeoutMs) return;
+        done = true;
+        clearInterval(timer);
+        try { ws.close(); } catch { /* ignore */ }
+        reject(new Error('Connection timed out'));
+      }, 250);
+      ws.onopen = () => { if (done) return; done = true; clearInterval(timer); resolve(this); };
+      ws.onerror = () => { if (done) return; done = true; clearInterval(timer); reject(new Error('Could not connect to ' + this.url)); };
       ws.onmessage = (ev) => {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }

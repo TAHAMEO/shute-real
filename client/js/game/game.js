@@ -693,12 +693,13 @@ export class Game {
   _updateMenu(dt) {
     if (!this.view) return;
     // Slow cinematic orbit around the map's main point of interest.
-    this.menuOrbit += dt * 0.025;
+    this.menuOrbit += dt * 0.02;
     const poi = this.world.pois[0];
-    const r = 85;
+    const r = 130;
     const x = poi.x + Math.cos(this.menuOrbit) * r;
     const z = poi.z + Math.sin(this.menuOrbit) * r;
-    const y = this.world.terrain.heightAt(x, z) + 14 + Math.sin(this.menuOrbit * 1.7) * 3;
+    const ground = Math.max(this.world.terrain.heightAt(x, z), this.world.terrain.heightAt(poi.x, poi.z));
+    const y = ground + 32 + Math.sin(this.menuOrbit * 1.7) * 4;
     const cam = this.rs.camera;
     cam.position.set(x, y, z);
     cam.lookAt(poi.x, this.world.terrain.heightAt(poi.x, poi.z) + 4, poi.z);

@@ -18,6 +18,7 @@ const rs = new RenderSystem(document.getElementById('c'));
 const g = { ...GRAPHICS_PRESETS[preset], vegetation: P.get('veg') !== '0' };
 if (P.get('ao') === '0') g.ao = false;
 if (P.get('rays') === '0') g.godrays = false;
+if (P.get('bloom') === '0') g.bloom = false;
 rs.setQuality({ renderScale: g.renderScale, ao: g.ao, bloom: g.bloom, antialias: g.antialias, godrays: g.godrays, shadows: g.shadows, pixelRatio: 1 });
 rs.setSize(innerWidth, innerHeight);
 const view = new WorldView(rs, world);
