@@ -372,12 +372,15 @@ export const STRUCTURE_RECIPES = {
     glsl: /* glsl */ `
       float H(vec2 uv) { return 0.5 + pfbm(uv, 8.0, 5) * 0.2; }
       vec3 C(vec2 uv, float h) {
-        float n = pfbm(uv + 0.5, 4.0, 6) * 0.5 + 0.5;
-        vec3 paint = ${v3('#5a5f52')};
-        vec3 rust = mix(${v3('#5a2f17')}, ${v3('#a4572b')}, pfbm(uv, 16.0, 3) * 0.5 + 0.5);
-        return mix(paint, rust, smoothstep(0.35, 0.6, n));
+        float n = pfbm(uv + 0.5, 3.0, 6) * 0.5 + 0.5;
+        vec3 paint = mix(${v3('#4a4d45')}, ${v3('#5d6157')}, pfbm(uv, 6.0, 3) * 0.5 + 0.5);
+        vec3 rust = mix(${v3('#4a2a18')}, ${v3('#7c4626')}, pfbm(uv, 16.0, 3) * 0.5 + 0.5);
+        float r = smoothstep(0.5, 0.72, n);
+        vec3 col = mix(paint, rust, r);
+        float dirt = smoothstep(0.4, 0.8, pfbm(uv + 3.0, 4.0, 4) * 0.5 + 0.5);
+        return col * (0.8 + 0.2 * (1.0 - dirt));
       }
-      float R(vec2 uv, float h) { return 0.7; }
+      float R(vec2 uv, float h) { return 0.75; }
     `,
   },
   metal_dark: {
@@ -432,7 +435,7 @@ export const STRUCTURE_RECIPES = {
         return max(s, s2 * 0.8);
       }
       vec3 C(vec2 uv, float h) {
-        vec3 col = mix(${v3('#8a7537')}, ${v3('#d9bf6a')}, h);
+        vec3 col = mix(${v3('#6e5f33')}, ${v3('#b39d5c')}, h);
         col = mix(col, ${v3('#6d6a3a')}, smoothstep(0.6, 0.8, pfbm(uv, 4.0, 4) * 0.5 + 0.5) * 0.4);
         return col;
       }

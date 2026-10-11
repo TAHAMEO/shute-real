@@ -15,6 +15,7 @@ function makeCanvas(w, h) {
   if (typeof document !== 'undefined') {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
+    c.getContext('2d', { willReadFrequently: true });
     return c;
   }
   return new OffscreenCanvas(w, h);
@@ -142,27 +143,61 @@ function twigWrapped(ctx, S, rand, cx, cy, len, width, color) {
   }
 }
 
-/** Blur the whole canvas by `px` keeping it tileable (draws wrapped copies). */
-function blurTile(cv, px) {
+/** Fast tileable box blur of a canvas (separable, wrap-around, `passes` iterations). */
+function boxBlurTile(cv, r, passes = 2) {
+  if (r < 1) return;
   const S = cv.width;
-  const tmp = makeCanvas(S, S);
-  const t = tmp.getContext('2d');
-  t.filter = `blur(${px}px)`;
-  for (let dx = -S; dx <= S; dx += S) for (let dy = -S; dy <= S; dy += S) t.drawImage(cv, dx, dy);
-  t.filter = 'none';
   const ctx = cv.getContext('2d');
-  ctx.clearRect(0, 0, S, S);
-  ctx.drawImage(tmp, 0, 0);
+  const img = ctx.getImageData(0, 0, S, S);
+  const d = img.data;
+  const tmp = new Float32Array(S * 3);
+  const inv = 1 / (2 * r + 1);
+  for (let p = 0; p < passes; p++) {
+    for (let dir = 0; dir < 2; dir++) {
+      for (let a = 0; a < S; a++) {
+        // load line
+        for (let b = 0; b < S; b++) {
+          const i = (dir ? b * S + a : a * S + b) * 4;
+          tmp[b * 3] = d[i]; tmp[b * 3 + 1] = d[i + 1]; tmp[b * 3 + 2] = d[i + 2];
+        }
+        let sr = 0; let sg = 0; let sb = 0;
+        for (let k = -r; k <= r; k++) { const j = ((k % S) + S) % S; sr += tmp[j * 3]; sg += tmp[j * 3 + 1]; sb += tmp[j * 3 + 2]; }
+        for (let b = 0; b < S; b++) {
+          const i = (dir ? b * S + a : a * S + b) * 4;
+          d[i] = sr * inv; d[i + 1] = sg * inv; d[i + 2] = sb * inv;
+          const jo = ((b - r) % S + S) % S; const ji = (b + r + 1) % S;
+          sr += tmp[ji * 3] - tmp[jo * 3]; sg += tmp[ji * 3 + 1] - tmp[jo * 3 + 1]; sb += tmp[ji * 3 + 2] - tmp[jo * 3 + 2];
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
-/** Paint a layer on its own canvas, blur it, and composite onto `dst`. */
+/** Soft radial blob (no filters), wrapped around the tile. */
+function softBlobWrapped(ctx, S, cx, cy, rx, ry, color, alpha) {
+  const r = Math.max(rx, ry);
+  for (let dx = -S; dx <= S; dx += S) {
+    for (let dy = -S; dy <= S; dy += S) {
+      const x = cx + dx; const y = cy + dy;
+      if (x + r < 0 || x - r > S || y + r < 0 || y - r > S) continue;
+      ctx.save();
+      ctx.translate(x, y); ctx.scale(rx / r, ry / r);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      g.addColorStop(0, `rgba(${color},${alpha})`);
+      g.addColorStop(0.55, `rgba(${color},${alpha * 0.7})`);
+      g.addColorStop(1, `rgba(${color},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+/** Paint a layer directly (sharp); softness comes from one final box blur pass. */
 function layer(dst, blur, paint) {
-  const S = dst.width;
-  const cv = makeCanvas(S, S);
-  const ctx = cv.getContext('2d');
-  paint(ctx, S);
-  if (blur > 0) blurTile(cv, blur);
-  dst.getContext('2d').drawImage(cv, 0, 0);
+  void blur;
+  paint(dst.getContext('2d'), dst.width);
 }
 
 /** Per-pixel fabric noise + faint weave + low frequency fade / dirt. */
@@ -206,12 +241,10 @@ const CAMO_PAINTERS = {
     ctx.fillStyle = '#8b8462';
     ctx.fillRect(0, 0, S, S);
     // large soft tonal zones
-    layer(cv, 26, (c) => {
-      for (let i = 0; i < 26; i++) {
-        const col = i % 3 === 0 ? 'rgba(165,154,118,0.85)' : i % 3 === 1 ? 'rgba(112,117,82,0.75)' : 'rgba(132,118,88,0.7)';
-        fillWrapped(c, S, blobShape(rand, S * (0.06 + rand() * 0.08), 0.8 + rand() * 0.6, 1.2 + rand() * 0.7, rand() * 0.6 - 0.3), rand() * S, rand() * S, col);
-      }
-    });
+    for (let i = 0; i < 30; i++) {
+      const c3 = i % 3 === 0 ? '165,154,118' : i % 3 === 1 ? '108,114,80' : '132,116,86';
+      softBlobWrapped(ctx, S, rand() * S, rand() * S, S * (0.06 + rand() * 0.07), S * (0.1 + rand() * 0.1), c3, 0.75);
+    }
     // mid tone blobs (olive, brown, tan)
     layer(cv, 2.5, (c) => {
       for (let i = 0; i < 80; i++) {
@@ -249,15 +282,13 @@ const CAMO_PAINTERS = {
   flora(cv, rand) {
     const S = cv.width;
     const ctx = cv.getContext('2d');
-    ctx.fillStyle = '#b6a780';
+    ctx.fillStyle = '#a69771';
     ctx.fillRect(0, 0, S, S);
-    layer(cv, 14, (c) => {
-      for (let i = 0; i < 16; i++) fillWrapped(c, S, blobShape(rand, S * 0.09, 0.8, 1.6), rand() * S, rand() * S, 'rgba(160,146,112,0.6)');
-    });
+    for (let i = 0; i < 16; i++) softBlobWrapped(ctx, S, rand() * S, rand() * S, S * 0.07, S * 0.13, '140,126,94', 0.6);
     layer(cv, 1.6, (c) => {
       for (let i = 0; i < 70; i++) {
         const k = rand();
-        const col = k < 0.45 ? '#9a8763' : k < 0.8 ? '#a3a283' : '#c8bb98';
+        const col = k < 0.45 ? '#8a7856' : k < 0.8 ? '#939273' : '#b8ab88';
         fillWrapped(c, S, flameShape(rand, S * (0.025 + rand() * 0.04), S * (0.12 + rand() * 0.18), (rand() - 0.5) * 0.25), rand() * S, rand() * S, col);
       }
       for (let i = 0; i < 46; i++) fillWrapped(c, S, flameShape(rand, S * (0.01 + rand() * 0.015), S * (0.06 + rand() * 0.1), (rand() - 0.5) * 0.3), rand() * S, rand() * S, '#7c6447');
@@ -297,6 +328,7 @@ export function getCamoTexture(pattern) {
     const cv = makeCanvas(CAMO_SIZE, CAMO_SIZE);
     const rand = rng(0x51A7 + CAMO_PATTERNS.indexOf(p) * 7919);
     CAMO_PAINTERS[p](cv, rand);
+    boxBlurTile(cv, 1, 2);
     fabricGrain(cv, rand, 9, 7);
     return canvasTexture(cv);
   });
@@ -505,21 +537,34 @@ export function getFaceTexture(tone = 0, style = 'stubble', knit = '#26272a') {
     // eye sockets shading
     for (const s of [-1, 1]) softDot(X(0.5 + s * ex), Y(eyeV + 0.01), 26, 15, 'rgba(60,35,30,1)', 0.35);
     // beard / stubble
+    const speckle = (count, accept, color, alphaFn, size) => {
+      const img = ctx.getImageData(0, 0, W, H);
+      const d = img.data;
+      for (let i = 0; i < count; i++) {
+        const u = rand(); const v = rand();
+        if (!accept(u, v)) continue;
+        const a = alphaFn();
+        const x0 = Math.floor(u * W); const y0 = Math.floor((1 - v) * H);
+        for (let yy = 0; yy < size; yy++) {
+          for (let xx = 0; xx < size; xx++) {
+            const x = (x0 + xx) % W; const y = Math.min(H - 1, y0 + yy);
+            const o = (y * W + x) * 4;
+            d[o] += (color[0] - d[o]) * a; d[o + 1] += (color[1] - d[o + 1]) * a; d[o + 2] += (color[2] - d[o + 2]) * a;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    };
     if (style === 'stubble' || style === 'beard') {
       const dens = style === 'beard' ? 1 : 0.55;
-      ctx.save();
-      for (let i = 0; i < (style === 'beard' ? 9000 : 5200); i++) {
-        const u = 0.5 + (rand() - 0.5) * 0.36;
-        const v = rand() * vy(0.0);
+      speckle(style === 'beard' ? 30000 : 18000, (u0, v) => {
+        const u = 0.32 + u0 * 0.36;
         const du = Math.abs(u - 0.5);
-        // jaw line + upper lip region, skip the lips themselves
-        if (v > vy(-0.012) && du > 0.05) continue;
-        if (v > vy(0.002)) continue;
-        if (Math.abs(v - vy(-0.028)) < 0.022 && du < 0.045) continue;
-        ctx.fillStyle = rgb(hair, 1, (0.18 + rand() * 0.25) * dens);
-        ctx.fillRect(X(u), Y(v), 1.3, 1.3);
-      }
-      ctx.restore();
+        if (v > vy(0.002)) return false;
+        if (v > vy(-0.012) && du > 0.05) return false;
+        if (Math.abs(v - vy(-0.028)) < 0.022 && du < 0.045) return false;
+        return du < 0.18;
+      }, hair, () => (0.18 + rand() * 0.25) * dens, 1);
     }
     // lips
     const lipV = vy(-0.028);
@@ -562,18 +607,12 @@ export function getFaceTexture(tone = 0, style = 'stubble', knit = '#26272a') {
     softDot(X(0.5 - 0.012), Y(vy(-0.003)), 4, 2.5, 'rgba(40,20,15,1)', 0.7);
     softDot(X(0.5 + 0.012), Y(vy(-0.003)), 4, 2.5, 'rgba(40,20,15,1)', 0.7);
     // short hair (visible without a helmet): top, back and sides above the ears
-    ctx.save();
-    for (let i = 0; i < 26000; i++) {
-      const u = rand(); const v = rand();
+    speckle(60000, (u, v) => {
       const du = Math.abs(u - 0.5);
-      // hairline: high at the forehead, lower at the sides, low at the back
       const line = du < 0.16 ? vy(0.128) + (du / 0.16) * 0.02 : du < 0.26 ? vy(0.1) - (du - 0.16) * 0.6 : vy(-0.035);
-      if (v < line) continue;
-      if (du > 0.2 && du < 0.3 && v < vy(0.07)) continue; // around the ears
-      ctx.fillStyle = rgb(hair, 0.85 + rand() * 0.3, 0.55 + rand() * 0.4);
-      ctx.fillRect(X(u), Y(v), 1.6, 1.6);
-    }
-    ctx.restore();
+      if (v < line) return false;
+      return !(du > 0.2 && du < 0.3 && v < vy(0.07));
+    }, hair, () => 0.45 + rand() * 0.45, 2);
     if (style === 'balaclava') {
       const k = hexToRgb(knit);
       const keep = makeCanvas(W, H);

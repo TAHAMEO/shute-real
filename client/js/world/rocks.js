@@ -10,18 +10,18 @@ import { createRockTextures, mulberry32, hash2, smoothstep, clamp01 } from './ve
 
 export const ROCK_TYPES = ['boulder', 'slab', 'spire', 'cliff', 'pebble'];
 const VARIANTS_PER_TYPE = 6;
-const MAX_LEVEL = { boulder: 5, slab: 4, spire: 5, cliff: 5, pebble: 3 };
-const LOD_LEVELS = [5, 4, 3, 2];
+const MAX_LEVEL = { boulder: 4, slab: 4, spire: 4, cliff: 4, pebble: 3 };
+const LOD_LEVELS = [4, 3, 2, 1];
 const TEX_W = 1024;
 
 /** Quality presets: LOD thresholds use projected size (radius / distance). */
 export const ROCK_QUALITY = {
-  low: { lodScale: 1.7, maxLevel: 4, cull: 0.007, far: 1200, texSize: 256 },
+  low: { lodScale: 1.7, maxLevel: 3, cull: 0.007, far: 1200, texSize: 256 },
   medium: { lodScale: 1.3, maxLevel: 4, cull: 0.005, far: 1600, texSize: 512 },
-  high: { lodScale: 1.0, maxLevel: 5, cull: 0.0035, far: 2200, texSize: 512 },
-  ultra: { lodScale: 0.75, maxLevel: 5, cull: 0.0025, far: 3000, texSize: 512 },
+  high: { lodScale: 1.0, maxLevel: 4, cull: 0.0035, far: 2200, texSize: 512 },
+  ultra: { lodScale: 0.7, maxLevel: 4, cull: 0.0025, far: 3000, texSize: 512 },
 };
-const LOD_THRESHOLDS = [0.32, 0.09, 0.028]; // projected size above which L5, L4, L3 are used
+const LOD_THRESHOLDS = [0.075, 0.025, 0.009]; // projected size (radius/distance) above which L4, L3, L2 are used
 
 // ---------------------------------------------------------------------------------------------
 // Icosphere with the vertex-prefix property (level n vertices are the first V(n) of level n+1)
@@ -52,7 +52,7 @@ function icosphere() {
     }
   }
   const levels = [{ index: faces.slice(), vcount: 12 }];
-  for (let l = 1; l <= 5; l++) {
+  for (let l = 1; l <= 4; l++) {
     const cache = new Map();
     const mid = (a, b) => {
       const key = a < b ? a * 65536 + b : b * 65536 + a;
@@ -243,9 +243,9 @@ function buildVariant(type, seed, maxLevel) {
       const st = ph - Math.floor(ph);
       r = 0.94 + 0.08 * n1 - 0.05 * smoothstep(0.75, 0.95, st) + 0.02 * N.noise(x * 8 + oy, y * 8, z * 8);
     } else if (type === 'spire') {
-      n1 = N.fbm(x * 1.3 + ox, y * 0.8 + oy, z * 1.3 + oz, 4);
-      const fl = N.ridged(x * 3.6 + ox, y * 0.9 + oy, z * 3.6 + oz, 3);
-      r = 0.93 + 0.09 * n1 - 0.12 * Math.pow(fl, 3) + 0.025 * N.noise(x * 9, y * 4 + ox, z * 9);
+      n1 = N.fbm(x * 1.6 + ox, y * 0.9 + oy, z * 1.6 + oz, 4);
+      const fl = N.ridged(x * 4.2 + ox, y * 1.1 + oy, z * 4.2 + oz, 3);
+      r = 0.9 + 0.14 * n1 - 0.2 * Math.pow(fl, 2.5) + 0.03 * N.noise(x * 9, y * 4 + ox, z * 9);
     } else if (type === 'cliff') {
       n1 = N.fbm(x * 1.2 + ox, y * 1.2 + oy, z * 1.2 + oz, 4);
       const ph = y * strataFreq + n1 * 0.8 + strataPhase;
@@ -262,10 +262,10 @@ function buildVariant(type, seed, maxLevel) {
     let vz = z * r;
     if (type === 'spire') {
       // taper towards a jagged top with secondary pinnacles
-      const tp = 1 - 0.42 * smoothstep(-0.1, 1.0, y);
+      const tp = 1 - 0.35 * smoothstep(0.0, 1.0, y);
       vx *= tp;
       vz *= tp;
-      if (y > 0.45) vy += 0.14 * smoothstep(0.45, 1.0, y) * N.fbm(x * 3 + ox, 0.5, z * 3 + oz, 3);
+      if (y > 0.3) vy += 0.3 * smoothstep(0.3, 1.0, y) * N.fbm(x * 4 + ox, 0.5, z * 4 + oz, 3);
     }
     for (let c = 0; c < cuts.length; c++) {
       const [cx, cy, cz, o] = cuts[c];
@@ -355,48 +355,65 @@ function computeNormals(p4, index, vcount) {
   return n;
 }
 
-let _library = null;
-/** Builds (once) all rock variants packed into vertex-pulling data textures. */
-function rockLibrary() {
-  if (_library) return _library;
+const _variantCache = new Map();
+
+/** Displaced positions/AO + per-level normals for one variant (cached at module level). */
+function getVariant(type, k) {
+  const key = `${type}:${k}`;
+  let v = _variantCache.get(key);
+  if (v) return v;
+  const ico = icosphere();
+  const maxLevel = MAX_LEVEL[type];
+  const data = buildVariant(type, 9001 + ROCK_TYPES.indexOf(type) * 101 + k * 17, maxLevel);
+  const normals = {};
+  for (const l of LOD_LEVELS) {
+    if (l > maxLevel) continue;
+    const lv = ico.levels[l];
+    const n = computeNormals(data, lv.index, lv.vcount);
+    const u8 = new Uint8Array(lv.vcount * 4);
+    for (let i = 0; i < lv.vcount; i++) {
+      u8[i * 4] = Math.round((n[i * 3] * 0.5 + 0.5) * 255);
+      u8[i * 4 + 1] = Math.round((n[i * 3 + 1] * 0.5 + 0.5) * 255);
+      u8[i * 4 + 2] = Math.round((n[i * 3 + 2] * 0.5 + 0.5) * 255);
+      u8[i * 4 + 3] = 255;
+    }
+    normals[l] = u8;
+  }
+  v = { type, maxLevel, data, normals };
+  _variantCache.set(key, v);
+  return v;
+}
+
+/** Packs the variants of the given rock types into vertex-pulling data textures. */
+function packLibrary(types) {
   const t0 = performance.now();
   const ico = icosphere();
-  const variants = [];
+  const variants = new Array(ROCK_TYPES.length * VARIANTS_PER_TYPE).fill(null);
   let posTexels = 0;
   let nrmTexels = 0;
+  const list = [];
   ROCK_TYPES.forEach((type, ti) => {
+    if (!types.has(type)) return;
     for (let k = 0; k < VARIANTS_PER_TYPE; k++) {
-      const maxLevel = MAX_LEVEL[type];
-      const data = buildVariant(type, 9001 + ti * 101 + k * 17, maxLevel);
-      const v = { type, maxLevel, data, posOffset: posTexels, nrmOffset: {} };
-      posTexels += ico.levels[maxLevel].vcount;
+      const src = getVariant(type, k);
+      const v = { type, maxLevel: src.maxLevel, src, posOffset: posTexels, nrmOffset: {} };
+      posTexels += ico.levels[src.maxLevel].vcount;
       for (const l of LOD_LEVELS) {
-        if (l > maxLevel) continue;
+        if (l > src.maxLevel) continue;
         v.nrmOffset[l] = nrmTexels;
         nrmTexels += ico.levels[l].vcount;
       }
-      variants.push(v);
+      variants[ti * VARIANTS_PER_TYPE + k] = v;
+      list.push(v);
     }
   });
-  const posRows = Math.ceil(posTexels / TEX_W);
-  const nrmRows = Math.ceil(nrmTexels / TEX_W);
+  const posRows = Math.max(1, Math.ceil(posTexels / TEX_W));
+  const nrmRows = Math.max(1, Math.ceil(nrmTexels / TEX_W));
   const posData = new Float32Array(TEX_W * posRows * 4);
   const nrmData = new Uint8Array(TEX_W * nrmRows * 4);
-  for (const v of variants) {
-    posData.set(v.data, v.posOffset * 4);
-    for (const l of LOD_LEVELS) {
-      if (l > v.maxLevel) continue;
-      const lv = ico.levels[l];
-      const n = computeNormals(v.data, lv.index, lv.vcount);
-      const o = v.nrmOffset[l] * 4;
-      for (let i = 0; i < lv.vcount; i++) {
-        nrmData[o + i * 4] = Math.round((n[i * 3] * 0.5 + 0.5) * 255);
-        nrmData[o + i * 4 + 1] = Math.round((n[i * 3 + 1] * 0.5 + 0.5) * 255);
-        nrmData[o + i * 4 + 2] = Math.round((n[i * 3 + 2] * 0.5 + 0.5) * 255);
-        nrmData[o + i * 4 + 3] = 255;
-      }
-    }
-    v.data = null;
+  for (const v of list) {
+    posData.set(v.src.data, v.posOffset * 4);
+    for (const l of LOD_LEVELS) if (v.src.normals[l]) nrmData.set(v.src.normals[l], v.nrmOffset[l] * 4);
   }
   const posTex = new THREE.DataTexture(posData, TEX_W, posRows, THREE.RGBAFormat, THREE.FloatType);
   const nrmTex = new THREE.DataTexture(nrmData, TEX_W, nrmRows, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -416,8 +433,14 @@ function rockLibrary() {
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
     geometries[l] = { geometry: g, triangles: lv.index.length / 3 };
   }
-  _library = { variants, posTex, nrmTex, geometries, buildMs: performance.now() - t0, refs: 0 };
-  return _library;
+  return {
+    types: new Set(types), variants, posTex, nrmTex, geometries, buildMs: performance.now() - t0,
+    dispose() {
+      posTex.dispose();
+      nrmTex.dispose();
+      for (const l of LOD_LEVELS) geometries[l].geometry.dispose();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -576,6 +599,8 @@ export class RockSystem {
       uRockParams: { value: new THREE.Vector4(0.42, 0.9, 1.0, 0.35) },
       uRockLichen: { value: new THREE.Color('#a7ab86') },
       uRockMoss: { value: new THREE.Color('#4a5230') },
+      tRockPos: { value: null },
+      tRockNrm: { value: null },
     };
     this._frustum = new THREE.Frustum();
     this._shadowFrustum = new THREE.Frustum();
@@ -587,24 +612,28 @@ export class RockSystem {
     this.count = 0;
   }
 
-  _ensureResources() {
-    if (this._lib) return;
-    this._lib = rockLibrary();
-    this._lib.refs++;
+  _ensureResources(types) {
+    if (!this._lib || [...types].some((t) => !this._lib.types.has(t))) {
+      const all = new Set([...(this._lib ? this._lib.types : []), ...types]);
+      if (this._lib) this._lib.dispose();
+      this._lib = packLibrary(all);
+      this.uniforms.tRockPos.value = this._lib.posTex;
+      this.uniforms.tRockNrm.value = this._lib.nrmTex;
+    }
+    if (this.material) return;
     this._tex = createRockTextures(this.q.texSize, 8);
     const U = this.uniforms;
-    const lib = this._lib;
     const tex = this._tex;
     const m = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0 });
     m.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, U, { tRockPos: { value: lib.posTex }, tRockNrm: { value: lib.nrmTex }, tRockAlbedo: { value: tex.albedo }, tRockNormal: { value: tex.normal } });
+      Object.assign(shader.uniforms, U, { tRockAlbedo: { value: tex.albedo }, tRockNormal: { value: tex.normal } });
       shader.vertexShader = injectRockVertex(shader.vertexShader);
       shader.fragmentShader = injectRockFragment(shader.fragmentShader);
     };
     m.customProgramCacheKey = () => 'rock-v1';
     const d = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
     d.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, U, { tRockPos: { value: lib.posTex }, tRockNrm: { value: lib.nrmTex } });
+      Object.assign(shader.uniforms, U);
       shader.vertexShader = injectRockDepthVertex(shader.vertexShader);
     };
     d.customProgramCacheKey = () => 'rock-depth-v1';
@@ -618,7 +647,10 @@ export class RockSystem {
   build(rocks = []) {
     const t0 = performance.now();
     this._clear();
-    this._ensureResources();
+    const types = new Set();
+    for (const r of rocks) types.add(ROCK_TYPES.includes(r.type) ? r.type : 'boulder');
+    if (!types.size) types.add('boulder');
+    this._ensureResources(types);
     const lib = this._lib;
     const n = rocks.length;
     const mat = new Float32Array(n * 16);
@@ -664,7 +696,7 @@ export class RockSystem {
       const mesh = new THREE.InstancedMesh(geo, this.material, cap);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.customDepthMaterial = this.depthMaterial;
-      mesh.castShadow = level >= 3;
+      mesh.castShadow = level >= 2;
       mesh.receiveShadow = true;
       mesh.frustumCulled = false;
       mesh.count = 0;
@@ -681,6 +713,7 @@ export class RockSystem {
     this._lastRebucket = -1e9;
     this._stats.buildMs = performance.now() - t0;
     this._stats.libraryMs = lib.buildMs;
+    this._stats.types = [...lib.types].join(',');
   }
 
   _clear() {
@@ -722,7 +755,7 @@ export class RockSystem {
       const m = r / d;
       if (m < q.cull) continue;
       const maxL = Math.min(MAX_LEVEL[ROCK_TYPES[Math.floor(vari[i] / VARIANTS_PER_TYPE)]], q.maxLevel);
-      let level = m > t5 ? 5 : m > t4 ? 4 : m > t3 ? 3 : 2;
+      let level = m > t5 ? 4 : m > t4 ? 3 : m > t3 ? 2 : 1;
       if (level > maxL) level = maxL;
       const st = this._lods[LOD_LEVELS.indexOf(level)];
       st.list[st.listN++] = i;
@@ -844,13 +877,9 @@ export class RockSystem {
       this._tex.albedo.dispose();
       this._tex.normal.dispose();
     }
-    if (this._lib && --this._lib.refs <= 0) {
-      this._lib.posTex.dispose();
-      this._lib.nrmTex.dispose();
-      for (const l of LOD_LEVELS) this._lib.geometries[l].geometry.dispose();
-      if (_library === this._lib) _library = null;
-    }
+    if (this._lib) this._lib.dispose();
     this._lib = null;
+    this.material = null;
     this.data = null;
   }
 }

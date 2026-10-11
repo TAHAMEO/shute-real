@@ -238,7 +238,7 @@ export class RenderSystem {
       grain: 0.018,
       aoStrength: 0.85,
     };
-    this.fx = { damage: 0, lowHealth: 0, flash: 0, aberration: 0.12, scope: 0 };
+    this.fx = { damage: 0, lowHealth: 0, flash: 0, aberration: 0.015, scope: 0 };
     this.time = 0;
     this.width = 1;
     this.height = 1;
@@ -312,7 +312,10 @@ export class RenderSystem {
 
   _ensureGTAO() {
     if (this.gtao) return this.gtao;
-    this.gtao = new GTAOPass(this.scene, this.camera, Math.max(1, this.width >> 1), Math.max(1, this.height >> 1), { depthTexture: this.rtScene.depthTexture });
+    // Construct with an internal G-buffer first (r186 crashes if a depth texture is passed to the
+    // constructor), then switch to our own depth texture so the scene is not rendered twice.
+    this.gtao = new GTAOPass(this.scene, this.camera, Math.max(1, this.width >> 1), Math.max(1, this.height >> 1));
+    this.gtao.setGBuffer(this.rtScene.depthTexture);
     this.gtao.output = GTAOPass.OUTPUT.Off;
     this.gtao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.5, thickness: 2.0, scale: 1.2, samples: 12, distanceFallOff: 1.0, screenSpaceRadius: false });
     this.gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, radiusExponent: 1, rings: 2, samples: 12 });

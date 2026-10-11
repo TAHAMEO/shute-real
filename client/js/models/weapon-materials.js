@@ -167,16 +167,16 @@ function buildTextures() {
   const pores = fbm(WW, WH, 4, 96, 2, 53, 0.6);
   const wood = new Uint8Array(WW * WH * 4);
   const woodH = new Float32Array(WW * WH);
-  const light = [148, 86, 48];
-  const dark = [66, 34, 17];
+  const light = [132, 74, 40];
+  const dark = [58, 28, 14];
   for (let y = 0; y < WH; y++) {
     for (let x = 0; x < WW; x++) {
       const i = y * WW + x;
-      const t = (y / WH) * 9 + warp[i] * 4.0 + warp2[i] * 0.8;
+      const t = (y / WH) * 22 + warp[i] * 3.0 + warp2[i] * 0.6;
       const ring = t - Math.floor(t);
       const late = smooth(0.62, 0.9, ring) * (1 - smooth(0.9, 1.0, ring));
       const p = pores[i];
-      let m = 0.18 + 0.45 * late + 0.35 * (p - 0.5) + 0.25 * (warp2[i] - 0.5);
+      let m = 0.32 + 0.28 * late + 0.3 * (p - 0.5) + 0.2 * (warp2[i] - 0.5);
       m = Math.min(1, Math.max(0, m));
       woodH[i] = 1 - late * 0.6 - p * 0.4;
       const o = i * 4;
@@ -193,8 +193,8 @@ function buildTextures() {
     metalN: dataTex(metalN, S, S, { repeat: 2.5 }),
     polyN: dataTex(polyN, S, S, { repeat: 3 }),
     knurlN: dataTex(knurlN, K, K, { repeat: 5 }),
-    wood: dataTex(wood, WW, WH, { srgb: true, repeat: 0.35 }),
-    woodN: dataTex(woodN, WW, WH, { repeat: 0.35 }),
+    wood: dataTex(wood, WW, WH, { srgb: true, repeat: 0.25 }),
+    woodN: dataTex(woodN, WW, WH, { repeat: 0.25 }),
   };
   TEX.lens = makeLensTexture();
   TEX.label = makeSmokeLabel();
@@ -348,9 +348,9 @@ const DEFS = {
   tanMetal: { color: '#7f6a4c', metalness: 0.3, roughness: 0.58, rough: true, normal: 'metalN', ns: 0.05 },
   od: { color: '#4b5137', metalness: 0.0, roughness: 0.7, normal: 'polyN', ns: 0.1 },
   green: { color: '#3a4632', metalness: 0.0, roughness: 0.6, normal: 'polyN', ns: 0.1 },
-  plum: { color: '#5c2b1f', metalness: 0.0, roughness: 0.45, normal: 'polyN', ns: 0.06 },
+  plum: { color: '#4a2219', metalness: 0.0, roughness: 0.45, normal: 'polyN', ns: 0.06 },
   wood: { color: '#ffffff', metalness: 0.0, roughness: 0.48, map: 'wood', normal: 'woodN', ns: 0.12 },
-  woodRed: { color: '#ffb59a', metalness: 0.0, roughness: 0.42, map: 'wood', normal: 'woodN', ns: 0.1 },
+  woodRed: { color: '#d99a80', metalness: 0.0, roughness: 0.42, map: 'wood', normal: 'woodN', ns: 0.1 },
   woodCheck: { color: '#f2d0b8', metalness: 0.0, roughness: 0.55, map: 'wood', normal: 'knurlN', ns: 0.45 },
   rubber: { color: '#171717', metalness: 0.0, roughness: 0.9, normal: 'polyN', ns: 0.15 },
   brass: { color: '#c39a4c', metalness: 1.0, roughness: 0.3, rough: true },

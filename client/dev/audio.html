@@ -348,6 +348,8 @@ async function selftest() {
   const s = engine.stats;
   say(`init ${initMs} ms · bank synth ${s.synthMs} ms · longest main-thread block ${s.maxBlockMs} ms · ${s.buffers} buffers · ${(s.bytes / 1048576).toFixed(2)} MB · ctx ${s.sampleRate} Hz (hi ${s.rates.hi} / lo ${s.rates.lo} / far ${s.rates.far})`, s.synthMs < 2000 ? 'pass' : 'fail');
   say(`ready=${engine.ready} state=${s.state}`);
+  const slow = [...engine.bank.stats.timings].sort((x, y) => Math.max(y.build, y.fin) - Math.max(x.build, x.fin)).slice(0, 4);
+  say('longest main-thread items: ' + slow.map((t) => `${t.name} ${Math.max(t.build, t.fin).toFixed(1)}ms`).join(', '));
 
   // 3. every API method once (plus all names), errors captured
   const errors = [];

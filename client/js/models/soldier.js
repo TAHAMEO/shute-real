@@ -507,6 +507,7 @@ function camoMaterial(pattern, fp = false) {
     map: getCamoTexture(pattern),
     normalMap: getFabricNormal(fp ? 2 : 1),
     normalScale: new THREE.Vector2(fp ? 0.75 : 0.9, fp ? 0.75 : 0.9),
+    color: 0xc4c4c4,
     roughness: 0.9,
     metalness: 0,
     vertexColors: true,
@@ -558,7 +559,7 @@ const frameOf = (name, mirror = false, local = null) => {
 };
 
 function buildHead(B, L, hi) {
-  const seg = hi ? 22 : 10;
+  const seg = hi ? 20 : 9;
   const rings = [
     [-0.078, -0.064, 0.010, 0.008, 0.008, 2.0],
     [-0.073, -0.056, 0.030, 0.022, 0.024, 2.0],
@@ -613,7 +614,7 @@ function buildHead(B, L, hi) {
     });
     // ears
     for (const s of [-1, 1]) {
-      addGeo(B.skin, new THREE.SphereGeometry(1, 8, 6), frameOf('head', false, _mtx(s * 0.078, 0.028, 0.012, -0.25, 0, 0, 0.012, 0.031, 0.019)), WHITE, w1('head'), { fixed: [s > 0 ? 0.75 : 0.25, 0.42] });
+      addGeo(B.skin, new THREE.SphereGeometry(1, 7, 4), frameOf('head', false, _mtx(s * 0.078, 0.028, 0.012, -0.25, 0, 0, 0.012, 0.031, 0.019)), WHITE, w1('head'), { fixed: [s > 0 ? 0.75 : 0.25, 0.42] });
     }
   }
   // neck
@@ -624,12 +625,12 @@ function buildHead(B, L, hi) {
   addLoft(B.skin, neck.map(([y, cz, r]) => {
     const s1 = smooth(-0.04, 0.02, y); const s2 = smooth(0.08, 0.14, y);
     return { c: [0, y, cz], rx: r, rf: r * 1.02, rb: r * 0.98, w: [cb, 1 - s1, nb, s1 * (1 - s2), hb, s2] };
-  }), { frame: frameOf('neck'), seg: hi ? 14 : 8, uv: (j, u) => [u, 0.004 + j * 0.004] });
+  }), { frame: frameOf('neck'), seg: hi ? 12 : 7, uv: (j, u) => [u, 0.004 + j * 0.004] });
 }
 
 function buildTorso(B, L, hi) {
   const P = L.palette;
-  const seg = hi ? 22 : 10;
+  const seg = hi ? 18 : 9;
   const pb = BI.pelvis; const sb = BI.spine; const cb = BI.chest; const nb = BI.neck;
   // shirt torso (camo), model space
   const torso = [
@@ -668,7 +669,7 @@ function buildTorso(B, L, hi) {
   const belt = [
     [1.032, 0.156, 0.104, 0.112], [1.032, 0.172, 0.120, 0.128], [1.088, 0.172, 0.120, 0.128], [1.088, 0.156, 0.104, 0.112], [1.032, 0.156, 0.104, 0.112],
   ];
-  addLoft(B.gear, belt.map(([y, rx, rf, rb]) => ({ c: [0, y, 0.004], rx, rf, rb, n: 2.5 })), { seg: hi ? 26 : 12, w: w1('pelvis'), col: beltC, tile: NYLON_TILE_M });
+  if (hi) addLoft(B.gear, belt.map(([y, rx, rf, rb]) => ({ c: [0, y, 0.004], rx, rf, rb, n: 2.5 })), { seg: 20, w: w1('pelvis'), col: beltC, tile: NYLON_TILE_M });
   addGeo(B.hard, chamferBox(0.052, 0.04, 0.012, 0.004), _mtx(0, 1.06, -0.126), col('#3a3a36'), w1('pelvis'));
   // plate carrier shell
   const carrierC = col(P.carrier);
@@ -692,17 +693,17 @@ function buildTorso(B, L, hi) {
   const cUse = hi ? carrier : [carrier[1], carrier[3], carrier[4]];
   const cw = (y) => (y < 1.15 ? [sb, 0.45, cb, 0.55] : [cb, 1]);
   addLoft(B.gear, cUse.map((r) => ({ c: [0, r.y, -0.006], rx: r.rx, rf: r.rf, rb: r.rb, n: 3.4, w: cw(r.y), top: r.top })), {
-    seg: hi ? 32 : 12, col: carrierC, tile: NYLON_TILE_M,
+    seg: hi ? 28 : 12, col: carrierC, tile: NYLON_TILE_M,
     disp: (p, j, k, a) => { if (cUse[j].top) p.y += sideDip(a); },
   });
   // shoulder straps
-  for (const s of [-1, 1]) {
+  for (const s of hi ? [-1, 1] : []) {
     const pts = [];
-    for (let i = 0; i <= (hi ? 10 : 5); i++) {
-      const th = -Math.PI / 2 + (i / (hi ? 10 : 5)) * Math.PI;
+    for (let i = 0; i <= 6; i++) {
+      const th = -Math.PI / 2 + (i / 6) * Math.PI;
       pts.push(new THREE.Vector3(s * 0.118, 1.418 + 0.118 * Math.cos(th), -0.004 + (th < 0 ? 0.158 : 0.150) * Math.sin(th)));
     }
-    addSweep(B.gear, pts, { w: 0.058, h: 0.018, n: 3, widthAxis: X_AXIS, weights: w1('chest'), col: carrierC, tile: NYLON_TILE_M, seg: hi ? 8 : 4 });
+    addSweep(B.gear, pts, { w: 0.058, h: 0.018, n: 3, widthAxis: X_AXIS, weights: w1('chest'), col: carrierC, tile: NYLON_TILE_M, seg: 6 });
   }
   const pouchC = col(P.pouch);
   const darkPouch = mulCol(pouchC, 0.82);
@@ -727,19 +728,13 @@ function buildTorso(B, L, hi) {
     // radio pouch, radio, antenna
     addGeo(B.gear, chamferBox(0.05, 0.13, 0.068, 0.007), C('chest', _mtx(-0.205, cy(1.25), 0.065, 0, 0.15, 0)), darkPouch, w1('chest'));
     addGeo(B.hard, chamferBox(0.042, 0.07, 0.056, 0.005), C('chest', _mtx(-0.205, cy(1.335), 0.065, 0, 0.15, 0)), col('#232421'), w1('chest'));
-    addSweep(B.hard, curvePts([[-0.205, cy(1.37), 0.075], [-0.21, cy(1.47), 0.10], [-0.2, cy(1.58), 0.135], [-0.185, cy(1.68), 0.17]], 6), { r: 0.0042, weights: w1('chest'), col: col('#1d1e1c'), seg: 5 });
+    addSweep(B.hard, curvePts([[-0.205, cy(1.37), 0.075], [-0.21, cy(1.47), 0.10], [-0.2, cy(1.58), 0.135], [-0.185, cy(1.68), 0.17]], 6), { r: 0.0042, frame: bindOf('chest'), weights: w1('chest'), col: col('#1d1e1c'), seg: 5 });
     // IFAK / utility pouch right side
     addGeo(B.gear, chamferBox(0.05, 0.10, 0.085, 0.007), C('chest', _mtx(0.205, cy(1.2), 0.04, 0, -0.1, 0)), darkPouch, w1('chest'));
     // MOLLE rows on the back panel
     for (let r = 0; r < 4; r++) {
       const y = 1.14 + r * 0.055;
-      const pts = [];
-      for (let i = 0; i <= 6; i++) {
-        const x = -0.13 + (i / 6) * 0.26;
-        const zz = 0.14 + (1 - (x / 0.19) ** 4) * 0.004 + 0.004;
-        pts.push(new THREE.Vector3(x, y, zz));
-      }
-      addSweep(B.gear, pts, { w: 0.022, h: 0.006, n: 4, up: Z_AXIS, weights: w1('chest'), col: mulCol(carrierC, 0.86), seg: 4, tile: NYLON_TILE_M });
+      addGeo(B.gear, new THREE.BoxGeometry(0.26, 0.022, 0.006), _mtx(0, y, 0.148), mulCol(carrierC, 0.86), w1('chest'));
     }
     // drag handle
     addGeo(B.gear, chamferBox(0.08, 0.025, 0.02, 0.006), C('chest', _mtx(0, cy(1.41), 0.155, 0.3, 0, 0)), mulCol(carrierC, 0.8), w1('chest'));
@@ -766,11 +761,11 @@ function buildTorso(B, L, hi) {
       addGeo(B.gear, chamferBox(0.06, 0.18, 0.1, 0.015), C('chest', _mtx(0.17, cy(1.24), 0.24)), mulCol(packC, 0.9), w1('chest'));
       for (const s of [-1, 1]) {
         const pts = [];
-        for (let i = 0; i <= 8; i++) {
-          const th = -Math.PI * 0.45 + (i / 8) * Math.PI * 0.95;
+        for (let i = 0; i <= 5; i++) {
+          const th = -Math.PI * 0.45 + (i / 5) * Math.PI * 0.95;
           pts.push(new THREE.Vector3(s * 0.12, 1.418 + 0.135 * Math.cos(th), -0.004 + (th < 0 ? 0.176 : 0.168) * Math.sin(th)));
         }
-        addSweep(B.gear, pts, { w: 0.05, h: 0.012, n: 3, widthAxis: X_AXIS, weights: w1('chest'), col: mulCol(packC, 0.85), seg: 6, tile: NYLON_TILE_M });
+        addSweep(B.gear, pts, { w: 0.05, h: 0.012, n: 3, widthAxis: X_AXIS, weights: w1('chest'), col: mulCol(packC, 0.85), seg: 4, tile: NYLON_TILE_M });
       }
     }
   } else if (L.pack === 2) {
@@ -797,26 +792,25 @@ function buildArm(B, L, hi, side) {
     [0.315, 0.048, 0.05, 0.05],
     [0.355, 0.05, 0.05, 0.051],
     [0.41, 0.05, 0.048, 0.049],
-    [0.47, 0.046, 0.045, 0.045],
-    [0.53, 0.041, 0.039, 0.039],
+    [0.5, 0.044, 0.042, 0.042],
     [0.565, 0.041, 0.038, 0.038],
     [0.6, 0.037, 0.034, 0.034],
   ];
-  const use = hi ? rings : [rings[1], rings[3], rings[5], rings[7], rings[9], rings[11], rings[13], rings[15]];
+  const use = hi ? rings : [rings[1], rings[3], rings[5], rings[7], rings[9], rings[11], rings[13], rings[14]];
   const wt = (t) => {
     const s1 = smooth(-0.05, 0.05, t); const s2 = smooth(0.275, 0.36, t);
     return [cb, 1 - s1, ub, s1 * (1 - s2), fb, s2];
   };
   addLoft(B.camo, use.map(([t, rx, rf, rb]) => ({ c: [0, -t, 0], rx, rf, rb, w: wt(t) })), {
-    frame: frameOf('upperArm' + side, mirror), seg: hi ? 16 : 8, capStart: true,
+    frame: frameOf('upperArm' + side, mirror), seg: hi ? 14 : 7, capStart: true,
   });
   // armband (team colour) + shoulder patch
   const band = [[0.085, 0.0575], [0.085, 0.0605], [0.14, 0.0585], [0.14, 0.0555]];
   addLoft(B.gear, band.map(([t, r]) => ({ c: [0, -t, 0], rx: r, rf: r + 0.002, rb: r - 0.001 })), {
-    frame: frameOf('upperArm' + side, mirror), seg: hi ? 16 : 8, w: [ub, 1], col: col(L.teamColor), tile: NYLON_TILE_M,
+    frame: frameOf('upperArm' + side, mirror), seg: hi ? 14 : 7, w: [ub, 1], col: col(L.teamColor), tile: NYLON_TILE_M,
   });
   if (hi) {
-    addGeo(B.gear, new THREE.BoxGeometry(0.008, 0.05, 0.06), frameOf('upperArm' + side, mirror, _mtx(0.064, -0.035, 0, 0, 0, 0)), col(L.palette.strap), w1('upperArm' + side));
+    addGeo(B.gear, new THREE.BoxGeometry(0.004, 0.05, 0.06), frameOf('upperArm' + side, mirror, _mtx(0.0645, -0.035, 0, 0, 0, 0)), col(L.palette.strap), w1('upperArm' + side));
   }
   // glove: palm/back loft along the hand's −Y
   const gl = col(L.palette.glove);
@@ -831,10 +825,10 @@ function buildArm(B, L, hi, side) {
   ];
   const pUse = hi ? palm : [palm[0], palm[2], palm[4], palm[6]];
   addLoft(B.gear, pUse.map(([y, cx, rx, rf, rb]) => ({ c: [cx, y, 0], rx, rf, rb, w: y > 0.02 ? [hb, 0.6, fb, 0.4] : [hb, 1] })), {
-    frame: frameOf('hand' + side, mirror), seg: hi ? 12 : 6, col: gl, tile: NYLON_TILE_M, capEnd: true, capStart: true,
+    frame: frameOf('hand' + side, mirror), seg: hi ? 10 : 5, col: gl, tile: NYLON_TILE_M, capEnd: true, capStart: true,
   });
   const fingerSweep = (bone, pts, w, h) => addSweep(B.gear, pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])), {
-    w, h, n: 2.4, widthAxis: X_AXIS, frame: frameOf(bone + side, mirror), weights: w1(bone + side), col: gl, seg: hi ? 8 : 4, tile: NYLON_TILE_M,
+    w, h, n: 2.4, widthAxis: X_AXIS, frame: frameOf(bone + side, mirror), weights: w1(bone + side), col: gl, seg: hi ? 6 : 4, tile: NYLON_TILE_M,
   });
   fingerSweep('fingers', [[0, 0.004, 0], [0, -0.03, 0], [0, -0.05, -0.008], [0, -0.06, -0.026], [0, -0.058, -0.042]], 0.05, 0.02);
   fingerSweep('index', [[0, 0.004, 0], [0, -0.035, 0], [0, -0.06, -0.006], [0, -0.072, -0.018]], 0.019, 0.019);
@@ -858,19 +852,18 @@ function buildLeg(B, L, hi, side) {
     [0.43, 0.0, 0.064, 0.066, 0.062],
     [0.48, 0.0, 0.063, 0.061, 0.064],
     [0.56, 0.0, 0.062, 0.057, 0.068],
-    [0.66, 0.0, 0.058, 0.053, 0.06],
-    [0.76, 0.0, 0.055, 0.051, 0.053],
+    [0.7, 0.0, 0.057, 0.052, 0.057],
     [0.82, 0.0, 0.055, 0.051, 0.053],
     [0.865, 0.0, 0.05, 0.048, 0.048],
   ];
-  const use = hi ? rings : [rings[0], rings[2], rings[4], rings[6], rings[8], rings[10], rings[12], rings[13]];
+  const use = hi ? rings : [rings[0], rings[2], rings[4], rings[6], rings[8], rings[9], rings[11], rings[12]];
   const wt = (t) => {
     const s1 = smooth(-0.1, 0.05, t); const s2 = smooth(0.385, 0.475, t);
     return [pb, 1 - s1, tb, s1 * (1 - s2), sb, s2];
   };
   const tint = mulCol(WHITE, 0.93);
   addLoft(B.camo, use.map(([t, cx, rx, rf, rb]) => ({ c: [cx, -t, 0], rx, rf, rb, w: wt(t), col: tint })), {
-    frame: frameOf('thigh' + side, mirror), seg: hi ? 16 : 8,
+    frame: frameOf('thigh' + side, mirror), seg: hi ? 14 : 7,
   });
   if (hi) {
     // cargo pocket
@@ -878,7 +871,7 @@ function buildLeg(B, L, hi, side) {
   }
   // knee pad
   const padM = frameOf('shin' + side, mirror, _mtx(0, -0.015, -0.058, -Math.PI / 2 + 0.1, 0, 0, 0.052, 0.034, 0.068));
-  addGeo(B.hard, new THREE.SphereGeometry(1, hi ? 10 : 6, hi ? 5 : 3, 0, TAU, 0, Math.PI / 2), padM, col(P.pad), w1('shin' + side));
+  addGeo(B.hard, new THREE.SphereGeometry(1, hi ? 8 : 5, hi ? 4 : 2, 0, TAU, 0, Math.PI / 2), padM, col(P.pad), w1('shin' + side));
   if (hi) {
     addLoft(B.gear, [[0.03, 0.066], [0.03, 0.069], [0.055, 0.068], [0.055, 0.065]].map(([t, r]) => ({ c: [0, -t, 0.004], rx: r, rf: r, rb: r })), {
       frame: frameOf('shin' + side, mirror), seg: 12, w: [sb, 1], col: col(P.strap), tile: NYLON_TILE_M,
@@ -900,13 +893,14 @@ function buildLeg(B, L, hi, side) {
   ];
   const bUse = hi ? boot : [boot[1], boot[3], boot[5], boot[7], boot[8]];
   addLoft(B.gear, bUse.map(([z, cy, rx, rb0, rt, n]) => ({ c: [0, cy, z], rx, rf: rb0, rb: rt, n, az: Y_AXIS })), {
-    frame: frameOf('foot' + side, mirror), seg: hi ? 16 : 8, a0: -Math.PI / 2, w: [fb, 1], capEnd: true, capStart: true, tile: NYLON_TILE_M,
+    frame: frameOf('foot' + side, mirror), seg: hi ? 12 : 6, a0: -Math.PI / 2, w: [fb, 1], capEnd: true, capStart: true, tile: NYLON_TILE_M,
     colFn: (p, n, j) => bootC,
   });
   // shaft
-  const shaft = [[-0.06, 0.058], [0.0, 0.06], [0.05, 0.058], [0.09, 0.06], [0.1, 0.062], [0.1, 0.05]];
+  const shaftAll = [[-0.06, 0.058], [0.0, 0.06], [0.05, 0.058], [0.09, 0.06], [0.1, 0.062], [0.1, 0.05]];
+  const shaft = hi ? shaftAll : [shaftAll[0], shaftAll[3], shaftAll[5]];
   addLoft(B.gear, shaft.map(([y, r], j) => ({ c: [0, y, 0.008], rx: r, rf: r + 0.004, rb: r, w: y > 0.03 ? [fb, 0.35, sb, 0.65] : [fb, 1], col: j >= 4 ? mulCol(bootC, 0.8) : bootC })), {
-    frame: frameOf('foot' + side, mirror), seg: hi ? 16 : 8, tile: NYLON_TILE_M,
+    frame: frameOf('foot' + side, mirror), seg: hi ? 12 : 6, tile: NYLON_TILE_M,
   });
   if (hi) {
     addGeo(B.gear, new THREE.BoxGeometry(0.022, 0.12, 0.01), frameOf('foot' + side, mirror, _mtx(0, -0.01, -0.06, -0.75, 0, 0)), lace, w1('foot' + side));
@@ -915,7 +909,7 @@ function buildLeg(B, L, hi, side) {
   const solePts = [[0.085, 0.034], [0.06, 0.05], [0.0, 0.054], [-0.08, 0.058], [-0.15, 0.054], [-0.2, 0.04], [-0.222, 0.018]];
   const sole = [];
   for (const [z, r] of solePts) sole.push({ c: [0, -0.094, z], rx: r, rf: 0.008, rb: 0.008, n: 3, az: Y_AXIS });
-  addLoft(B.hard, hi ? sole : [sole[0], sole[2], sole[4], sole[6]], { frame: frameOf('foot' + side, mirror), seg: hi ? 12 : 6, a0: -Math.PI / 2, w: [fb, 1], col: col(P.sole), capStart: true, capEnd: true });
+  if (hi) addLoft(B.hard, [sole[0], sole[1], sole[3], sole[5], sole[6]], { frame: frameOf('foot' + side, mirror), seg: 8, a0: -Math.PI / 2, w: [fb, 1], col: col(P.sole), capStart: true, capEnd: true });
 }
 
 /** Helmet / boonie, headset, eyewear. Coordinates in head space. */
@@ -940,7 +934,7 @@ function buildHeadgear(B, L, hi) {
       const dx = Math.sin(th) * Math.sin(phi); const dy = Math.cos(th); const dz = -Math.sin(th) * Math.cos(phi);
       return new THREE.Vector3(HC.x + dx * (R.x + off), HC.y + dy * (R.y + off), HC.z + dz * ((dz < 0 ? R.f : R.b) + off));
     };
-    const NC = hi ? 28 : 12; const NR = hi ? 9 : 4;
+    const NC = hi ? 24 : 12; const NR = hi ? 8 : 4;
     const rows = [];
     const rowsIn = [];
     const centers = [];
@@ -970,7 +964,7 @@ function buildHeadgear(B, L, hi) {
     addGrid(B.hard, lipRows, { centers: lipC, w: hb, col: mulCol(shellCol.clone(), L.cover ? 0.35 : 0.8) });
     if (hi) {
       const innerRows = [toModel(rowsIn[NR - 1]), toModel(rowsIn[Math.floor(NR * 0.6)]), toModel(rowsIn[Math.floor(NR * 0.25)])];
-      addGrid(B.hard, innerRows, { centers: [centers[NR], centers[6], centers[3]], w: hb, col: col('#1d1d1b'), inward: true });
+      addGrid(B.hard, innerRows, { centers: [centers[NR], centers[5], centers[2]], w: hb, col: col('#1d1d1b'), inward: true });
       // side rails
       for (const sd of [-1, 1]) {
         const pts = [];
@@ -978,10 +972,10 @@ function buildHeadgear(B, L, hi) {
           const phi = sd * (58 + i * 11) * DEG;
           pts.push(surf(phi, rim(phi) - 9 * DEG, 0.004));
         }
-        addSweep(B.hard, pts, { w: 0.007, h: 0.016, n: 4, frame: bindOf('head'), up: pts[3].clone().sub(HC).normalize(), weights: hb, col: col(P.helmet).multiplyScalar(0.75), seg: 4 });
+        addSweep(B.hard, pts, { w: 0.018, h: 0.007, n: 4, frame: bindOf('head'), up: pts[3].clone().sub(HC).normalize(), weights: hb, col: col(P.helmet).multiplyScalar(0.75), seg: 4 });
       }
       // NVG shroud
-      const sp = surf(0, 52 * DEG, 0.004);
+      const sp = surf(0, 63 * DEG, 0.004);
       const nq = new THREE.Matrix4().lookAt(sp, HC, Y_AXIS);
       const shroudM = new THREE.Matrix4().makeTranslation(sp.x, sp.y, sp.z).multiply(new THREE.Matrix4().extractRotation(nq));
       addGeo(B.hard, chamferBox(0.052, 0.04, 0.012, 0.004), F(shroudM), col('#222320'), hb);
@@ -989,7 +983,7 @@ function buildHeadgear(B, L, hi) {
         const base = new THREE.Matrix4().makeTranslation(0, 0.168, -0.086).multiply(new THREE.Matrix4().makeRotationX(0.9));
         addGeo(B.hard, chamferBox(0.03, 0.03, 0.05, 0.006), F(base), col('#20221f'), hb);
         for (const sd of [-1, 1]) {
-          addGeo(B.hard, new THREE.CylinderGeometry(0.0175, 0.016, 0.075, 10), F(base.clone().multiply(_mtx(sd * 0.024, 0.0, -0.01, 0, 0, 0))), col('#262823'), hb);
+          addGeo(B.hard, new THREE.CylinderGeometry(0.0175, 0.016, 0.075, 8), F(base.clone().multiply(_mtx(sd * 0.024, 0.0, -0.01, 0, 0, 0))), col('#262823'), hb);
         }
       }
       // counterweight / battery pouch
@@ -1001,7 +995,7 @@ function buildHeadgear(B, L, hi) {
       const tq = new THREE.Matrix4().lookAt(tp, HC, Y_AXIS);
       addGeo(B.gear, new THREE.BoxGeometry(0.06, 0.04, 0.004), F(new THREE.Matrix4().makeTranslation(tp.x, tp.y, tp.z).multiply(new THREE.Matrix4().extractRotation(tq))), col(L.teamColor), hb);
       // chin strap
-      const strap = curvePts([[0.098, 0.04, 0.012], [0.075, -0.02, -0.01], [0.05, -0.062, -0.04], [0.0, -0.08, -0.055], [-0.05, -0.062, -0.04], [-0.075, -0.02, -0.01], [-0.098, 0.04, 0.012]], 12);
+      const strap = curvePts([[0.098, 0.04, 0.012], [0.075, -0.02, -0.01], [0.05, -0.062, -0.04], [0.0, -0.08, -0.055], [-0.05, -0.062, -0.04], [-0.075, -0.02, -0.01], [-0.098, 0.04, 0.012]], 9);
       addSweep(B.gear, strap, { w: 0.016, h: 0.004, n: 4, widthAxis: Z_AXIS, frame: bindOf('head'), weights: hb, col: col('#22221f'), seg: 4, caps: false });
     }
   } else {
@@ -1018,10 +1012,10 @@ function buildHeadgear(B, L, hi) {
     if (hi) addGeo(B.hard, new THREE.CylinderGeometry(0.03, 0.034, 0.012, 12), F(_mtx(sd * 0.114, 0.03, 0.01, 0, 0, Math.PI / 2)), mulCol(comm, 1.4), hb);
   }
   if (hi) {
-    addSweep(B.hard, curvePts([[0.094, 0.0, 0.03], [0.07, -0.02, 0.085], [0.0, -0.03, 0.112], [-0.07, -0.02, 0.085], [-0.094, 0.0, 0.03]], 9), { w: 0.014, h: 0.006, n: 3, up: Y_AXIS, frame: bindOf('head'), weights: hb, col: comm, seg: 4 });
+    addSweep(B.hard, curvePts([[0.094, 0.0, 0.03], [0.07, -0.02, 0.085], [0.0, -0.03, 0.112], [-0.07, -0.02, 0.085], [-0.094, 0.0, 0.03]], 7), { w: 0.014, h: 0.006, n: 3, up: Y_AXIS, frame: bindOf('head'), weights: hb, col: comm, seg: 4 });
     addSweep(B.hard, curvePts([[0.1, 0.012, -0.012], [0.085, -0.012, -0.065], [0.045, -0.03, -0.1]], 5), { r: 0.003, frame: bindOf('head'), weights: hb, col: comm, seg: 4 });
     if (L.eyewear) {
-      const lens = curvePts([[-0.07, 0.044, -0.07], [-0.04, 0.046, -0.098], [0, 0.044, -0.104], [0.04, 0.046, -0.098], [0.07, 0.044, -0.07]], 9);
+      const lens = curvePts([[-0.07, 0.044, -0.07], [-0.04, 0.046, -0.098], [0, 0.044, -0.104], [0.04, 0.046, -0.098], [0.07, 0.044, -0.07]], 7);
       addSweep(B.hard, lens, { w: 0.003, h: 0.034, n: 3, up: Y_AXIS, frame: bindOf('head'), weights: hb, col: col('#121314'), seg: 4 });
       for (const sd of [-1, 1]) {
         addSweep(B.hard, [new THREE.Vector3(sd * 0.072, 0.052, -0.068), new THREE.Vector3(sd * 0.082, 0.05, -0.02), new THREE.Vector3(sd * 0.08, 0.045, 0.01)], { r: 0.003, frame: bindOf('head'), weights: hb, col: col('#1a1a1a'), seg: 4 });
@@ -2048,4 +2042,290 @@ export function soldierStats(model) {
   let tris = 0;
   for (const m of model.meshes) tris += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3;
   return { triangles: tris, drawCalls: model.meshes.length, bones: model.bones.length };
+}
+
+// ================================================================== first-person arms
+
+const FP_UPPER = 0.33;
+const FP_FORE = 0.30;
+// [name, knuckle position (right hand space), phalanx lengths, radius]
+const FP_FINGERS = [
+  ['index', [0.025, -0.094, 0.0], [0.042, 0.025, 0.021], 0.0098],
+  ['middle', [0.005, -0.098, 0.0], [0.046, 0.028, 0.022], 0.0101],
+  ['ring', [-0.014, -0.094, 0.0], [0.043, 0.027, 0.021], 0.0096],
+  ['pinky', [-0.031, -0.085, 0.0], [0.034, 0.021, 0.019], 0.0086],
+];
+const FP_THUMB = [[0.024, -0.022, -0.014], [0.044, 0.032, 0.026], 0.0113];
+
+function fpBoneDefs() {
+  const core = [];
+  const side = [
+    ['upperArm', null, [0.2, 0, 0]],
+    ['foreArm', 'upperArm', [0, -FP_UPPER, 0]],
+    ['twist', 'foreArm', [0, -FP_FORE, 0]],
+    ['hand', 'twist', [0, 0, 0]],
+  ];
+  for (const [n, p, l] of FP_FINGERS) {
+    side.push([n + '1', 'hand', p], [n + '2', n + '1', [0, -l[0], 0]], [n + '3', n + '2', [0, -l[1], 0]]);
+  }
+  side.push(['thumb1', 'hand', FP_THUMB[0]], ['thumb2', 'thumb1', [0, -FP_THUMB[1][0], 0]], ['thumb3', 'thumb2', [0, -FP_THUMB[1][1], 0]]);
+  const defs = [];
+  for (const s of ['L', 'R']) {
+    const m = s === 'L' ? -1 : 1;
+    for (const [name, parent, pos] of side) defs.push({ name: name + s, parent: parent ? parent + s : null, pos: [pos[0] * m, pos[1], pos[2]], rot: [0, 0, 0] });
+  }
+  void core;
+  return defs;
+}
+
+const FP_RIG = makeRig(fpBoneDefs());
+const FI = FP_RIG.index;
+
+/** FP glove / sleeve palettes per team. */
+const FP_LOOK = {
+  0: { camo: 'multicam', glove: '#3a3833', palm: '#1f1f1d', knuckle: '#151515', cuff: '#4c5241', strap: '#2b2c28' },
+  1: { camo: 'flora', glove: '#8a7656', palm: '#2c2a26', knuckle: '#1c1b19', cuff: '#a08b66', strap: '#4a4234' },
+  ffa: { camo: 'woodland', glove: '#2e2e2b', palm: '#1d1d1b', knuckle: '#141414', cuff: '#4a4d3c', strap: '#2b2c28' },
+};
+
+const _fpGeoCache = new Map();
+
+function fpGeometry(teamKey) {
+  let g = _fpGeoCache.get(teamKey);
+  if (g) return g;
+  const L = FP_LOOK[teamKey];
+  const B = { camo: new Acc(), gear: new Acc(), hard: new Acc() };
+  const bw = FP_RIG.bindWorld;
+  const fr = (name, mirror, local = null) => {
+    const m = bw[FI[name]].clone();
+    if (mirror) m.multiply(MIRROR_X);
+    if (local) m.multiply(local);
+    return m;
+  };
+  const glove = col(L.glove); const palmC = col(L.palm); const knC = col(L.knuckle);
+  // two-tone: palm-facing vertices (local −Z) darker
+  const twoTone = (boneName, mirror) => {
+    const inv = new THREE.Matrix3().getNormalMatrix(fr(boneName, mirror)).invert();
+    const nn = new THREE.Vector3();
+    return (p, n) => (nn.copy(n).applyMatrix3(inv).normalize().z < -0.35 ? palmC : glove);
+  };
+  for (const side of ['L', 'R']) {
+    const mirror = side === 'L';
+    const ub = FI['upperArm' + side]; const fb = FI['foreArm' + side]; const tb = FI['twist' + side]; const hb = FI['hand' + side];
+    // sleeve: t along the arm (straight bind), [t, rx, rf, rb]
+    const sleeve = [
+      [-0.07, 0.03, 0.03, 0.03], [-0.055, 0.052, 0.052, 0.052], [-0.03, 0.062, 0.062, 0.062], [0.02, 0.064, 0.064, 0.062],
+      [0.1, 0.06, 0.061, 0.058], [0.18, 0.056, 0.058, 0.055], [0.26, 0.053, 0.055, 0.052], [0.31, 0.051, 0.053, 0.052],
+      [0.35, 0.052, 0.052, 0.054], [0.39, 0.054, 0.051, 0.053], [0.44, 0.053, 0.049, 0.051], [0.49, 0.05, 0.046, 0.048],
+      [0.54, 0.047, 0.043, 0.045], [0.575, 0.045, 0.041, 0.043], [0.585, 0.049, 0.045, 0.047], [0.61, 0.05, 0.046, 0.048],
+      [0.632, 0.049, 0.045, 0.047], [0.636, 0.043, 0.04, 0.041],
+    ];
+    const wt = (t) => {
+      const s1 = smooth(0.29, 0.37, t); const s2 = smooth(0.42, 0.6, t);
+      return [ub, 1 - s1, fb, s1 * (1 - s2), tb, s2];
+    };
+    addLoft(B.camo, sleeve.map(([t, rx, rf, rb]) => ({ c: [0, -t, 0], rx, rf, rb, w: wt(t), col: t > 0.578 ? mulCol(WHITE, 0.82) : WHITE })), {
+      frame: fr('upperArm' + side, mirror), seg: 26, capStart: true, tile: CAMO_TILE_M / 2,
+    });
+    // cuff velcro tab
+    addGeo(B.camo, chamferBox(0.03, 0.035, 0.008, 0.003), fr('twist' + side, mirror, _mtx(0.0, 0.025, 0.05, 0.08, 0, 0)), mulCol(WHITE, 0.75), [tb, 1], { box: 1 / CAMO_TILE_M });
+    // glove cuff (under the sleeve cuff) + wrist strap
+    const cuff = [[0.075, 0.041, 0.038, 0.04], [0.03, 0.042, 0.037, 0.039], [0.0, 0.04, 0.032, 0.034], [-0.012, 0.039, 0.027, 0.028]];
+    addLoft(B.gear, cuff.map(([y, rx, rf, rb]) => ({ c: [0, y, 0], rx, rf, rb, w: y > 0.02 ? [tb, 1] : [hb, 1] })), {
+      frame: fr('hand' + side, mirror), seg: 20, col: glove, tile: NYLON_TILE_M,
+    });
+    addLoft(B.gear, [[0.022, 0.0435, 0.039, 0.041], [0.022, 0.046, 0.041, 0.044], [0.0, 0.0445, 0.036, 0.039], [0.0, 0.042, 0.034, 0.037]].map(([y, rx, rf, rb]) => ({ c: [0, y, 0], rx, rf, rb })), {
+      frame: fr('hand' + side, mirror), seg: 20, w: [hb, 1], col: col(L.strap), tile: NYLON_TILE_M,
+    });
+    // palm / back of the hand
+    const palm = [
+      [-0.008, 0.002, 0.039, 0.026, 0.024], [-0.025, 0.006, 0.044, 0.024, 0.02], [-0.045, 0.007, 0.047, 0.022, 0.018],
+      [-0.068, 0.004, 0.048, 0.019, 0.016], [-0.088, 0.0, 0.046, 0.016, 0.015], [-0.1, -0.002, 0.042, 0.013, 0.013], [-0.106, -0.002, 0.034, 0.009, 0.009],
+    ];
+    addLoft(B.gear, palm.map(([y, cx, rx, rf, rb]) => ({ c: [cx, y, 0], rx, rf, rb })), {
+      frame: fr('hand' + side, mirror), seg: 20, w: [hb, 1], capEnd: true, tile: NYLON_TILE_M, colFn: twoTone('hand' + side, mirror),
+    });
+    // thenar pad
+    addGeo(B.gear, new THREE.SphereGeometry(1, 10, 8), fr('hand' + side, mirror, _mtx(0.022, -0.038, -0.012, 0.3, 0, 0.5, 0.018, 0.03, 0.014)), palmC, [hb, 1]);
+    // knuckle guard (hard rubber) on the back of the hand
+    addGeo(B.hard, chamferBox(0.078, 0.022, 0.012, 0.005), fr('hand' + side, mirror, _mtx(-0.003, -0.088, 0.016, 0, 0, 0)), knC, [hb, 1]);
+    addGeo(B.hard, chamferBox(0.05, 0.03, 0.007, 0.003), fr('hand' + side, mirror, _mtx(0.0, -0.055, 0.019, 0, 0, 0)), knC, [hb, 1]);
+    // fingers
+    const phal = (bone, len, r, last, padC) => {
+      const rings = [];
+      const n = last ? [[0.004, 0.75], [0.0, 0.95], [-len * 0.5, 1], [-len * 0.85, 0.92], [-len - r * 0.55, 0.62], [-len - r * 0.85, 0.2]] : [[0.004, 0.8], [0.0, 1], [-len * 0.5, 0.97], [-len, 0.98], [-len - r * 0.35, 0.8]];
+      for (const [y, k] of n) rings.push({ c: [0, y, 0], rx: r * k, rf: r * k * 0.95, rb: r * k * 0.9 });
+      addLoft(B.gear, rings, { frame: fr(bone + side, mirror), seg: 10, w: [FI[bone + side], 1], capStart: true, capEnd: true, tile: NYLON_TILE_M, colFn: padC });
+    };
+    for (const [n, , l, r] of FP_FINGERS) {
+      for (let i = 0; i < 3; i++) phal(n + (i + 1), l[i], r * (1 - i * 0.07), i === 2, twoTone(n + (i + 1) + side, mirror));
+      // knuckle pad on the proximal phalanx
+      addGeo(B.hard, chamferBox(0.016, 0.02, 0.006, 0.0025), fr(n + '1' + side, mirror, _mtx(0, -l[0] * 0.45, r * 0.95, 0, 0, 0)), knC, [FI[n + '1' + side], 1]);
+    }
+    for (let i = 0; i < 3; i++) phal('thumb' + (i + 1), FP_THUMB[1][i], FP_THUMB[2] * (1.12 - i * 0.1), i === 2, twoTone('thumb' + (i + 1) + side, mirror));
+    // watch on the left wrist (twist bone, dorsal side)
+    if (side === 'L') {
+      const tw = (m) => fr('twist' + side, mirror, m);
+      addGeo(B.hard, new THREE.CylinderGeometry(0.0195, 0.0205, 0.011, 20), tw(_mtx(0, 0.038, 0.041, Math.PI / 2, 0, 0)), col('#2a2b2a'), [tb, 1]);
+      addGeo(B.hard, new THREE.CylinderGeometry(0.0158, 0.0158, 0.002, 20), tw(_mtx(0, 0.038, 0.0468, Math.PI / 2, 0, 0)), col('#0d0f10'), [tb, 1]);
+      addGeo(B.hard, chamferBox(0.004, 0.004, 0.006, 0.001), tw(_mtx(0.021, 0.038, 0.041)), col('#3a3b3a'), [tb, 1]);
+      addLoft(B.gear, [[0.049, 0.0405, 0.036, 0.0395], [0.049, 0.0425, 0.0385, 0.0415], [0.027, 0.0425, 0.0385, 0.0415], [0.027, 0.0405, 0.036, 0.0395]].map(([y, rx, rf, rb]) => ({ c: [0, y, 0], rx, rf, rb })), {
+        frame: fr('twist' + side, mirror), seg: 20, w: [tb, 1], col: col('#252623'), tile: NYLON_TILE_M,
+      });
+    }
+  }
+  g = { camo: B.camo.geometry(), gear: B.gear.geometry(), hard: B.hard.geometry() };
+  _fpGeoCache.set(teamKey, g);
+  return g;
+}
+
+/** Finger poses: [curl1, curl2, curl3] per finger + thumb [cmcX, cmcY, cmcZ, mcp, ip]. */
+const FP_POSES = {
+  pistol: { index: [0.42, 0.5, 0.22], middle: [1.32, 1.3, 0.62], ring: [1.42, 1.25, 0.6], pinky: [1.5, 1.15, 0.55], thumb: [0.55, 0.15, -0.75, 0.35, 0.3], spread: 0.04 },
+  guard: { index: [0.95, 0.8, 0.35], middle: [1.05, 0.9, 0.42], ring: [1.1, 0.92, 0.45], pinky: [1.15, 0.9, 0.45], thumb: [0.15, 0.25, -0.35, 0.15, 0.12], spread: 0.06 },
+  mag: { index: [1.05, 0.95, 0.45], middle: [1.15, 1.0, 0.5], ring: [1.2, 1.0, 0.5], pinky: [1.25, 1.0, 0.5], thumb: [0.4, 0.3, -0.6, 0.3, 0.25], spread: 0.03 },
+  relaxed: { index: [0.22, 0.3, 0.18], middle: [0.3, 0.38, 0.2], ring: [0.36, 0.42, 0.22], pinky: [0.42, 0.45, 0.25], thumb: [0.15, 0.1, -0.2, 0.1, 0.1], spread: 0.1 },
+};
+
+/** Hand frames relative to the target anchors (anchor frame: −Z bore, +Y up). */
+const HAND_FP = {
+  rightQ: handRotation(new THREE.Vector3(0, -0.4, -0.92), new THREE.Vector3(-1, 0, 0.12), new THREE.Quaternion()),
+  rightGrip: new THREE.Vector3(0.003, -0.068, -0.025),
+  leftQ: handRotation(new THREE.Vector3(0.66, 0.1, -0.75), new THREE.Vector3(-0.25, 0.95, 0.15), new THREE.Quaternion()),
+  leftGrip: new THREE.Vector3(-0.002, -0.07, -0.028),
+  magQ: handRotation(new THREE.Vector3(0.05, 0.3, -0.95), new THREE.Vector3(0.95, 0.1, 0), new THREE.Quaternion()),
+  magGrip: new THREE.Vector3(-0.004, -0.075, -0.03),
+};
+
+const FP_SHOULDER = [new THREE.Vector3(-0.2, -0.29, -0.02), new THREE.Vector3(0.2, -0.3, 0.1)];
+const FP_POLE = [new THREE.Vector3(-0.55, -0.8, 0.05), new THREE.Vector3(0.5, -0.82, 0.18)];
+const _fpInv = new THREE.Matrix4();
+const _fpM = new THREE.Matrix4();
+const _fpP = new THREE.Vector3();
+const _fpQ = new THREE.Quaternion();
+const _fpS = new THREE.Vector3();
+const _fpSh = new THREE.Vector3();
+
+/**
+ * First-person arms for the viewmodel scene (camera space: camera at the origin looking −Z).
+ * @param {{team?: number}} [opts]
+ * @returns {{root: THREE.Group, update: Function, setVisible: Function, dispose: Function, bones: THREE.Bone[]}}
+ */
+export function createFirstPersonArms({ team = 0 } = {}) {
+  const teamKey = team === 0 || team === 1 ? team : 'ffa';
+  const L = FP_LOOK[teamKey];
+  const root = new THREE.Group();
+  root.name = 'fpArms';
+  const defs = FP_RIG.defs;
+  const bones = defs.map((d, i) => {
+    const b = new THREE.Bone();
+    b.name = d.name;
+    b.position.fromArray(d.pos);
+    b.quaternion.copy(FP_RIG.localQ[i]);
+    return b;
+  });
+  defs.forEach((d, i) => { if (d.parent) bones[FI[d.parent]].add(bones[i]); else root.add(bones[i]); });
+  const skeleton = new THREE.Skeleton(bones, FP_RIG.bindInv.map((m) => m.clone()));
+  const geos = fpGeometry(teamKey);
+  const mats = { camo: camoMaterial(L.camo, true), gear: gearMaterial(), hard: hardMaterial() };
+  const meshes = [];
+  for (const k of ['camo', 'gear', 'hard']) {
+    const m = new THREE.SkinnedMesh(geos[k], mats[k]);
+    m.name = `fpArms-${k}`;
+    m.bind(skeleton, IDENTITY);
+    m.frustumCulled = false;
+    m.castShadow = false;
+    m.receiveShadow = false;
+    root.add(m);
+    meshes.push(m);
+  }
+  const rq = bones.map(() => new THREE.Quaternion());
+  const curPose = [{}, {}];
+  for (let k = 0; k < 2; k++) {
+    for (const n of ['index', 'middle', 'ring', 'pinky']) curPose[k][n] = FP_POSES.relaxed[n].slice();
+    curPose[k].thumb = FP_POSES.relaxed.thumb.slice();
+    curPose[k].spread = FP_POSES.relaxed.spread;
+  }
+  const qUp = new THREE.Quaternion(); const qFore = new THREE.Quaternion();
+  const qHand = new THREE.Quaternion(); const qTw = new THREE.Quaternion(); const qLoc = new THREE.Quaternion();
+  const wrist = new THREE.Vector3(); const shoulder = new THREE.Vector3();
+  const lowered = new THREE.Vector3(-0.26, -0.7, -0.05);
+
+  const solve = (k, target, handQ, grip, poseName, opts) => {
+    const side = k ? 'R' : 'L';
+    const ui = FI['upperArm' + side]; const fi = FI['foreArm' + side]; const ti = FI['twist' + side]; const hi = FI['hand' + side];
+    if (target) {
+      _fpM.multiplyMatrices(_fpInv, target.matrixWorld);
+      _fpM.decompose(_fpP, _fpQ, _fpS);
+      qHand.multiplyQuaternions(_fpQ, handQ);
+      wrist.copy(grip).applyQuaternion(qHand).negate().add(_fpP);
+    } else {
+      wrist.copy(lowered);
+      handRotation(_v1.set(0.05, -1, -0.2), _v2.set(0.9, 0, -0.2), qHand);
+    }
+    // elastic shoulder: move toward the target when out of reach (shoulders are off screen)
+    shoulder.copy(FP_SHOULDER[k]);
+    const reach = (FP_UPPER + FP_FORE) * 0.985;
+    const d = wrist.distanceTo(shoulder);
+    if (d > reach) shoulder.lerp(wrist, Math.min(0.14, d - reach) / d);
+    bones[ui].position.copy(shoulder);
+    solveTwoBone(shoulder, wrist, FP_POLE[k], FP_UPPER, FP_FORE, _mid, _end);
+    chainRotations(shoulder, _mid, _end, FP_POLE[k], 1, qUp, qFore);
+    bones[ui].quaternion.copy(qUp);
+    bones[fi].quaternion.copy(qUp).invert().multiply(qFore);
+    // forearm twist bone takes the roll of the hand around the forearm axis
+    qLoc.copy(qFore).invert().multiply(qHand);
+    twistAround(qLoc, Y_AXIS, qTw);
+    bones[ti].quaternion.copy(qTw);
+    bones[hi].quaternion.copy(qTw).invert().multiply(qLoc);
+    // fingers (smoothed toward the target pose)
+    const target2 = FP_POSES[poseName];
+    const cp = curPose[k];
+    const a = opts.snap ? 1 : clamp((opts.dt ?? 1 / 60) * 14, 0, 1);
+    const m = k ? 1 : -1;
+    for (const n of ['index', 'middle', 'ring', 'pinky']) {
+      for (let i = 0; i < 3; i++) cp[n][i] += (target2[n][i] - cp[n][i]) * a;
+    }
+    for (let i = 0; i < 5; i++) cp.thumb[i] += (target2.thumb[i] - cp.thumb[i]) * a;
+    cp.spread += (target2.spread - cp.spread) * a;
+    const trig = k && poseName === 'pistol' ? clamp(opts.trigger || 0, 0, 1) : 0;
+    const spreadDir = { index: 1, middle: 0.2, ring: -0.6, pinky: -1.2 };
+    for (const n of ['index', 'middle', 'ring', 'pinky']) {
+      const extra = n === 'index' ? [0.25 * trig, 0.35 * trig, 0.1 * trig] : [0, 0, 0];
+      qEuler(bones[FI[n + '1' + side]].quaternion, cp[n][0] + extra[0], 0, m * -cp.spread * spreadDir[n]);
+      qEuler(bones[FI[n + '2' + side]].quaternion, cp[n][1] + extra[1], 0, 0);
+      qEuler(bones[FI[n + '3' + side]].quaternion, cp[n][2] + extra[2], 0, 0);
+    }
+    const th = cp.thumb;
+    qEuler(bones[FI['thumb1' + side]].quaternion, th[0], m * th[1], m * th[2]);
+    qEuler(bones[FI['thumb2' + side]].quaternion, th[3], 0, 0);
+    qEuler(bones[FI['thumb3' + side]].quaternion, th[4], 0, 0);
+  };
+
+  return {
+    root,
+    bones,
+    meshes,
+    /**
+     * Place the hands on the weapon anchors (Object3Ds in the same scene, world matrices updated).
+     * @param {THREE.Object3D|null} rightTarget pistol-grip anchor
+     * @param {THREE.Object3D|null} leftTarget handguard anchor (null → left hand lowered out of view)
+     * @param {{leftOverride?: THREE.Object3D|null, trigger?: number, dt?: number, snap?: boolean}} [opts]
+     */
+    update(rightTarget, leftTarget, opts = {}) {
+      root.updateWorldMatrix(true, false);
+      _fpInv.copy(root.matrixWorld).invert();
+      solve(1, rightTarget, HAND_FP.rightQ, HAND_FP.rightGrip, rightTarget ? 'pistol' : 'relaxed', opts);
+      const ov = opts.leftOverride || null;
+      const lt = ov || leftTarget || null;
+      solve(0, lt, ov ? HAND_FP.magQ : HAND_FP.leftQ, ov ? HAND_FP.magGrip : HAND_FP.leftGrip, ov ? 'mag' : lt ? 'guard' : 'relaxed', opts);
+      root.updateMatrixWorld(true);
+      void rq;
+    },
+    setVisible(v) { root.visible = !!v; },
+    dispose() {
+      if (root.parent) root.parent.remove(root);
+      skeleton.dispose();
+    },
+  };
 }

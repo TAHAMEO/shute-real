@@ -24,6 +24,7 @@ const TREE_VARIANTS = 3;
 const BUSH_VARIANTS = 2;
 const IMPOSTOR_VIEWS = 8;
 const MAX_IMPOSTOR_VARIANTS = SPECIES_LIST.length * TREE_VARIANTS;
+const NEAR_TRIANGLE_BUDGET = 5900;
 
 /** Quality presets (near tree distance, bush distance/density/shadows, impostor layer width). */
 export const VEGETATION_QUALITY = {
@@ -222,7 +223,7 @@ function crown(C, R, { aoMin = 0.35, clumpW = 0.45, faceW = 0.18, lowDark = 0.25
 }
 
 /** One alpha-tested card: base = attachment point (texture bottom centre), up/side unit vectors. */
-function addCard(b, cr, base, up, side, w, h, layer, flex, phase, clump, tint = WHITE, type = 1) {
+function addCard(b, cr, base, up, side, w, h, layer, flex, phase, clump, tint = WHITE, type = 1, clumpR = 0) {
   const fn = norm(cross(side, up));
   const p0 = madd(madd(base, side, -w * 0.5), up, -h * 0.04);
   const p1 = madd(p0, side, w);
@@ -231,7 +232,9 @@ function addCard(b, cr, base, up, side, w, h, layer, flex, phase, clump, tint = 
   const ids = [p0, p1, p2, p3].map((p, k) => {
     const uv = k === 0 ? [0, 0] : k === 1 ? [1, 0] : k === 2 ? [1, 1] : [0, 1];
     const f = k < 2 ? flex * 0.6 : flex;
-    return b.vert(p, cr.normal(p, fn, clump), uv[0], uv[1], tint, cr.ao(p), layer, type, f, phase);
+    let ao = cr.ao(p);
+    if (clumpR > 0) ao *= 0.5 + 0.5 * smoothstep(0, clumpR * 1.3, vlen(sub(p, clump)));
+    return b.vert(p, cr.normal(p, fn, clump), uv[0], uv[1], tint, ao, layer, type, f, phase);
   });
   b.quad(ids[0], ids[1], ids[2], ids[3]);
 }
@@ -243,6 +246,35 @@ function addTuft(b, rng, cr, base, axis, w, h, layer, flex, clump, tint, type = 
   const phase = rng();
   addCard(b, cr, base, axis, s1, w, h, layer, flex, phase, clump, tint, type);
   addCard(b, cr, base, axis, s2, w * 0.92, h * 0.96, layer, flex, phase, clump, tint, type);
+}
+
+function randomDir(rng) {
+  const z = rng() * 2 - 1;
+  const a = rng() * TAU;
+  const r = Math.sqrt(1 - z * z);
+  return [Math.cos(a) * r, z, Math.sin(a) * r];
+}
+
+/**
+ * Volumetric clump of cards around centre c (radius r) facing random directions. radial = the
+ * texture is centred (needle burst); otherwise cards grow outward from the clump centre.
+ * lift biases the card's up axis (+ up, - hanging).
+ */
+function addClump(b, rng, cr, c, r, n, size, layer, flex, { radial = false, lift = 0, tint = WHITE, type = 1 } = {}) {
+  for (let k = 0; k < n; k++) {
+    const nd = randomDir(rng);
+    const off = mul(randomDir(rng), r * Math.cbrt(rng()) * 0.65);
+    const center = add(c, off);
+    let a = madd(off, nd, -dot(off, nd));
+    a = vlen(a) < 1e-4 ? perp(nd) : norm(a);
+    a = norm(add(a, [0, lift, 0]));
+    a = madd(a, nd, -dot(a, nd));
+    a = vlen(a) < 1e-4 ? perp(nd) : norm(a);
+    const side = norm(cross(a, nd));
+    const w = size * (0.8 + rng() * 0.4);
+    const base = madd(center, a, radial ? -w * 0.5 : -w * 0.3);
+    addCard(b, cr, base, a, side, w, w, layer, flex, rng(), c, tint, type, r);
+  }
 }
 
 /** Bent strip (fern frond / hanging spray) along a path, width vector per point. */
@@ -331,7 +363,7 @@ function addStub(b, rng, trunk, y, len, r, layer) {
 // Species generators. Each returns the builder filled with one tree variant at scale 1.
 // ---------------------------------------------------------------------------------------------
 
-function genPine(rng, v) {
+function genPine(rng, v, dens = 1) {
   const b = new MeshBuilder();
   const H = TREE_SPECIES.pine.height * [1.0, 0.94, 1.06][v];
   const R1 = TREE_SPECIES.pine.trunkRadius;
@@ -360,7 +392,7 @@ function genPine(rng, v) {
   let az = rng() * TAU;
   while (y < H - 0.7) {
     const t = (y - cb) / (H - cb);
-    const nb = 2 + Math.floor(rng() * 2.6);
+    const nb = 3 + Math.floor(rng() * 2.2);
     for (let k = 0; k < nb; k++) {
       az += 2.39996 + (rng() - 0.5) * 0.7;
       const len = Lmax * shape(t) * (0.7 + rng() * 0.45);
@@ -369,7 +401,7 @@ function genPine(rng, v) {
       const start = trunk.centerAt(y);
       const pts = branchPath(rng, start, dirAE(az, el), len, 4, { droop: 0.22 * (1 - t), upturn: 0.45, wobble: 0.18 });
       const r0 = Math.min(0.1, 0.022 + len * 0.016);
-      addTube(b, pts, taper(pts.length, r0, 0.012, 0.9), { radial: 5, layer: L.barkPine, uRep: 1, vScale: 0.35, ao: () => 0.6, flex: (s) => 0.35 * s, tint: () => [1.2, 1.0, 0.85] });
+      addTube(b, pts, taper(pts.length, r0, 0.012, 0.9), { radial: 4, layer: L.barkPine, uRep: 1, vScale: 0.35, ao: () => 0.6, flex: (s) => 0.35 * s, tint: () => [1.2, 1.0, 0.85] });
       const tip = pts[pts.length - 1];
       const clump = madd(tip, [0, 1, 0], -0.25);
       // side shoots
@@ -383,26 +415,20 @@ function genPine(rng, v) {
         addTube(b, sp, taper(sp.length, 0.022, 0.008), { radial: 3, layer: L.barkPine, uRep: 1, vScale: 0.25, ao: () => 0.65, flex: (q) => 0.5 + 0.3 * q, tint: () => [1.2, 1.0, 0.85] });
         shoots.push(sp);
       }
-      // needle tufts: dense at the outer part of every shoot
-      for (const sp of shoots) {
-        const main = sp === pts;
-        const n = Math.max(2, Math.round((main ? len * 0.55 : len * 0.3) * 2.6));
-        for (let q = 0; q < n; q++) {
-          const s = (main ? 0.42 : 0.2) + (main ? 0.58 : 0.8) * ((q + rng() * 0.6) / n);
-          const at = pathAt(sp, s);
-          const axis = norm(add(add(mul(at.d, 0.7), [0, 0.75, 0]), [(rng() - 0.5) * 0.7, (rng() - 0.5) * 0.4, (rng() - 0.5) * 0.7]));
-          const size = 0.95 + rng() * 0.5;
-          addTuft(b, rng, cr, madd(at.p, axis, -0.15), axis, size, size * 1.05, L.pine, 0.55 + 0.4 * s, clump);
-        }
+      // dense needle clumps: big one at the branch tip, smaller ones on the side shoots
+      const tipR = 0.45 + len * 0.16;
+      addClump(b, rng, cr, madd(tip, [0, 1, 0], 0.15), tipR, Math.max(3, Math.round((5 + len * 2.0) * dens)), 1.4 + len * 0.08, L.pine, 0.85, { radial: true });
+      for (let q = 1; q < shoots.length; q++) {
+        const sp = shoots[q];
+        addClump(b, rng, cr, madd(sp[sp.length - 1], [0, 1, 0], 0.1), 0.4 + len * 0.06, Math.max(2, Math.round((4 + Math.floor(rng() * 2)) * dens)), 1.15, L.pine, 0.95, { radial: true });
       }
-      // crown top filler for the end tuft
-      addTuft(b, rng, cr, tip, norm(add(pathAt(pts, 1).d, [0, 1.2, 0])), 1.25, 1.3, L.pine, 1, clump);
+      if (len > 2.2) addClump(b, rng, cr, madd(pathAt(pts, 0.6).p, [0, 1, 0], 0.2), 0.45, 4, 1.1, L.pine, 0.6, { radial: true });
     }
     y += 0.45 + rng() * 0.4;
   }
   // leader top
-  const top = trunk.centerAt(H - 0.5);
-  for (let k = 0; k < 3; k++) addTuft(b, rng, cr, madd(top, [0, 1, 0], -0.4 - k * 0.35), norm([(rng() - 0.5) * 0.6, 1, (rng() - 0.5) * 0.6]), 1.1, 1.2, L.pine, 0.8, top);
+  const top = trunk.centerAt(H - 0.7);
+  addClump(b, rng, cr, top, 0.8, 9, 1.4, L.pine, 0.8, { radial: true });
   return b;
 }
 
@@ -446,7 +472,7 @@ function genAraucaria(rng, v) {
         const clump = madd(at.p, [0, 1, 0], -0.1);
         for (const sgn of [-1, 1]) {
           const ax = norm(add(mul(side, sgn * 0.75), add(mul(at.d, 0.55), [0, 0.35 + rng() * 0.3, 0])));
-          const size = 1.05 + rng() * 0.35;
+          const size = 1.3 + rng() * 0.4;
           // flat-ish plate card (normal mostly up) + vertical card for side views
           const flatSide = norm(cross([0, 1, 0], ax));
           addCard(b, cr, madd(at.p, ax, -0.1), ax, flatSide, size, size, L.araucaria, 0.4 + 0.5 * s, rng(), clump);
@@ -454,9 +480,8 @@ function genAraucaria(rng, v) {
           addCard(b, cr, madd(at.p, upAx, -0.1), upAx, norm(cross(upAx, flatSide)), size * 0.9, size * 0.95, L.araucaria, 0.4 + 0.5 * s, rng(), clump);
         }
       }
-      // upturned candelabra tuft at the tip
-      addTuft(b, rng, cr, madd(tip, [0, 1, 0], -0.2), norm(add(pathAt(pts, 1).d, [0, 1.4, 0])), 1.5, 1.6, L.araucaria, 1, tip);
-      addTuft(b, rng, cr, madd(tip, [0, 1, 0], -0.2), norm(add(pathAt(pts, 1).d, [0, 0.4, 0])), 1.4, 1.4, L.araucaria, 1, tip);
+      // upturned candelabra clump at the tip
+      addClump(b, rng, cr, madd(tip, [0, 1, 0], 0.25), 0.7, 7, 1.6, L.araucaria, 1, { lift: 1.6 });
     }
   }
   const top = trunk.centerAt(H - 0.6);
@@ -494,7 +519,7 @@ function genSpruce(rng, v) {
       for (let q = 0; q < n; q++) {
         const s = 0.18 + 0.82 * ((q + 0.4 + rng() * 0.3) / n);
         const at = pathAt(pts, s);
-        const w = (0.75 + rng() * 0.3) * (0.65 + 0.35 * (1 - t));
+        const w = (0.95 + rng() * 0.35) * (0.7 + 0.3 * (1 - t));
         const h = w * (1.25 + rng() * 0.2);
         const ax = norm(add(at.d, [(rng() - 0.5) * 0.3, 0.1, (rng() - 0.5) * 0.3]));
         const side = norm(cross(ax, [0, 1, 0]));
@@ -549,23 +574,14 @@ function genBirch(rng, v) {
       const tl = 0.9 + rng() * 0.9;
       const tp = branchPath(rng, at.p, d, tl, 2, { droop: 0.3, wobble: 0.2 });
       addTube(b, tp, taper(tp.length, 0.012, 0.005), { radial: 3, layer: L.barkBirch, uRep: 1, vScale: 0.2, ao: () => 0.75, flex: (s) => 0.6 + 0.4 * s, tint: () => [0.55, 0.5, 0.48] });
-      const nc = 2 + Math.floor(rng() * 2);
-      for (let c = 0; c < nc; c++) {
-        const ct = pathAt(tp, 0.3 + 0.7 * (c / nc));
-        const ax = norm(add(ct.d, [(rng() - 0.5) * 0.5, -0.4, (rng() - 0.5) * 0.5]));
-        const size = 0.8 + rng() * 0.35;
-        addTuft(b, rng, cr, madd(ct.p, ax, -0.1), ax, size, size, L.birch, 0.75 + 0.25 * c / nc, ct.p);
-      }
+      addClump(b, rng, cr, pathAt(tp, 0.7).p, 0.55, 5, 1.05, L.birch, 0.9, { lift: -0.6 });
     }
-    // leaves along the outer main branch, pointing up/out
-    for (let q = 0; q < 2; q++) {
-      const at = pathAt(pts, 0.6 + 0.4 * q);
-      addTuft(b, rng, cr, at.p, norm(add(at.d, [0, 0.4, 0])), 0.9, 0.95, L.birch, 0.8, at.p);
-    }
+    // leaves around the outer main branch
+    addClump(b, rng, cr, pathAt(pts, 0.85).p, 0.7, 6, 1.1, L.birch, 0.8, { lift: -0.2 });
   }
   // leader top
   const top = trunk.centerAt(H * 0.88);
-  for (let k = 0; k < 4; k++) addTuft(b, rng, cr, madd(top, [0, 1, 0], -0.5 * k), norm([(rng() - 0.5) * 1.4, 0.8, (rng() - 0.5) * 1.4]), 1.0, 1.0, L.birch, 0.8, top);
+  addClump(b, rng, cr, madd(top, [0, 1, 0], -0.6), 0.9, 8, 1.1, L.birch, 0.8, { lift: 0.4 });
   return b;
 }
 
@@ -611,17 +627,13 @@ function genOak(rng, v) {
     }
     tipsL2.push(pts);
   }
-  // leaf clusters on the outer halves of all small branches -> clumpy cloud crown
+  // leaf clumps at the ends of all small branches -> clumpy cloud crown
   for (const p of tipsL2) {
-    const lenp = p.reduce((s, q, i) => (i ? s + vlen(sub(q, p[i - 1])) : 0), 0);
-    const n = Math.max(1, Math.round(lenp * 1.25));
+    const lenp = p.reduce((acc, q, i) => (i ? acc + vlen(sub(q, p[i - 1])) : 0), 0);
     const end = p[p.length - 1];
-    for (let q = 0; q < n; q++) {
-      const at = pathAt(p, 0.45 + 0.55 * ((q + rng() * 0.7) / n));
-      const ax = norm(add(at.d, [(rng() - 0.5) * 1.0, 0.45 + rng() * 0.3, (rng() - 0.5) * 1.0]));
-      const size = 1.05 + rng() * 0.45;
-      addTuft(b, rng, cr, madd(at.p, ax, -0.25), ax, size, size, L.oak, 0.6 + 0.4 * (q / n), end);
-    }
+    const r = 0.7 + Math.min(0.6, lenp * 0.12);
+    addClump(b, rng, cr, madd(end, [0, 1, 0], 0.2), r, Math.round(5 + lenp * 1.2), 1.45, L.oak, 0.9, { lift: 0.5 });
+    if (lenp > 2) addClump(b, rng, cr, pathAt(p, 0.55).p, 0.6, 4, 1.3, L.oak, 0.6, { lift: 0.5 });
   }
   return b;
 }
@@ -826,6 +838,13 @@ void RE_Direct_Veg( const in IncidentLight directLight, const in vec3 geometryPo
 #define RE_Direct RE_Direct_Veg
 `;
 
+// Leaves: weaker, non-white Fresnel (spherical normals make grazing angles common).
+const GLSL_LEAF_SPEC = /* glsl */`
+material.specularF90 = mix( 1.0, 0.25, gVegTrans );
+material.specularColor *= mix( 1.0, 0.6, gVegTrans );
+material.specularColorBlended = material.specularColor;
+`;
+
 const GLSL_TBN = /* glsl */`
 mat3 vegTBN( vec3 eye_pos, vec3 surf_norm, vec2 uv ) {
   vec3 q0 = dFdx( eye_pos.xyz );
@@ -899,8 +918,10 @@ diffuseColor.rgb *= vegTex.rgb * vVegCol.rgb * vegTint * mix( 1.0, vVegCol.a, 0.
 gVegTrans = vegLeaf;
 `)
     .replace('#include <roughnessmap_fragment>', `
-float roughnessFactor = ( vVegData.y > 0.5 && vVegData.y < 1.5 ) ? 0.62 : 0.93;
+float roughnessFactor = ( vVegData.y > 0.5 && vVegData.y < 1.5 ) ? 0.7 : 0.93;
 `)
+    .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+${GLSL_LEAF_SPEC}`)
     .replace('#include <normal_fragment_maps>', `
 if ( vVegData.y < 0.5 ) {
   vec3 vegMapN = texture( tVegNormal, vec3( vVegUv, vVegData.x ) ).xyz * 2.0 - 1.0;
@@ -1008,8 +1029,10 @@ gVegTrans = impLeaf;
     .replace('#include <roughnessmap_fragment>', `
 float roughnessFactor = 0.93;
 `)
+    .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+${GLSL_LEAF_SPEC}`)
     .replace('#include <normal_fragment_maps>', `
-roughnessFactor = mix( 0.93, 0.62, impLeaf );
+roughnessFactor = mix( 0.93, 0.7, impLeaf );
 vec2 impNxy = impNd.xy * 2.0 - 1.0;
 float impNz = sqrt( saturate( 1.0 - dot( impNxy, impNxy ) ) );
 normal = normalize( impNxy.x * vImpR + impNxy.y * vImpU + impNz * vImpF );
@@ -1223,7 +1246,7 @@ export class VegetationSystem {
     if (this._textures) return;
     const caps = this.renderer.capabilities;
     const aniso = Math.min(this.q.aniso, caps.getMaxAnisotropy ? caps.getMaxAnisotropy() : 1);
-    this._textures = createVegetationTextures(this.q.texSize, aniso);
+    this._textures = createVegetationTextures(this.renderer, this.q.texSize, aniso);
     this._materials = this._createMaterials();
   }
 
@@ -1260,8 +1283,15 @@ export class VegetationSystem {
     let e = this._geoCache.get(key);
     if (e) return e;
     const seed = (kind === 'tree' ? 1000 : 5000) + SPECIES_LIST.indexOf(name) * 97 + BUSH_SPECIES.indexOf(name) * 131 + v * 7919;
-    const rng = mulberry32(seed);
-    const builder = kind === 'tree' ? TREE_GEN[name](rng, v) : BUSH_GEN[name](rng, v);
+    // regenerate with lower foliage density until the variant fits the near-LOD triangle budget
+    let builder = null;
+    let dens = 1;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const rng = mulberry32(seed);
+      builder = kind === 'tree' ? TREE_GEN[name](rng, v, dens) : BUSH_GEN[name](rng, v, dens);
+      if (builder.triangles <= NEAR_TRIANGLE_BUDGET) break;
+      dens *= (NEAR_TRIANGLE_BUDGET / builder.triangles) * 0.95;
+    }
     const geometry = builder.geometry();
     const pos = geometry.attributes.position.array;
     let rMax = 0;
@@ -1750,10 +1780,7 @@ export class VegetationSystem {
       this._impostor.albedo.dispose();
       this._impostor.normal.dispose();
     }
-    if (this._textures) {
-      this._textures.albedo.dispose();
-      this._textures.normal.dispose();
-    }
+    if (this._textures) this._textures.dispose();
     this._textures = null;
     this._materials = null;
     this._impostor = null;

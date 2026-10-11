@@ -596,7 +596,423 @@ function paintTwigs(ctx, rng) {
   batch.flush(ctx);
 }
 
-__GPU_SECTION__
+// ---------------------------------------------------------------------------------------------
+// GPU texture generation: bark (procedural shader) and foliage (canvas + pull-push dilation)
+// are rendered straight into array render targets, so nothing is read back to the CPU.
+// ---------------------------------------------------------------------------------------------
+
+/** Layer indices of the vegetation texture arrays. Bark layers come first (they own normal maps). */
+export const VEG_LAYERS = {
+  barkPine: 0,
+  barkAraucaria: 1,
+  barkSpruce: 2,
+  barkBirch: 3,
+  barkOak: 4,
+  barkDead: 5,
+  pine: 6,
+  spruce: 7,
+  araucaria: 8,
+  birch: 9,
+  oak: 10,
+  shrub: 11,
+  fern: 12,
+  juniper: 13,
+  twigs: 14,
+};
+export const VEG_BARK_LAYERS = 6;
+export const VEG_LAYER_COUNT = 15;
+
+const BARK_STRENGTH = [9, 7, 6, 5, 10, 7];
+
+const FOLIAGE = [
+  ['pine', (c, r) => paintPine(c, r), 11],
+  ['spruce', (c, r) => paintSpruce(c, r), 12],
+  ['araucaria', (c, r) => paintAraucaria(c, r), 13],
+  ['birch', (c, r) => paintLeafCluster(c, r, { shape: 'birch', count: 300, size: 0.06, hue: 86, sat: 0.5, lum: 0.32, droop: 0.6 }), 14],
+  ['oak', (c, r) => paintLeafCluster(c, r, { shape: 'oak', count: 210, size: 0.088, hue: 95, sat: 0.42, lum: 0.23, droop: 0.1, spread: 1.3 }), 15],
+  ['shrub', (c, r) => paintLeafCluster(c, r, { shape: 'ellipse', count: 260, size: 0.075, hue: 92, sat: 0.4, lum: 0.25, droop: 0.2, spread: 1.4 }), 16],
+  ['fern', (c, r) => paintFern(c, r), 17],
+  ['juniper', (c, r) => paintJuniper(c, r), 18],
+  ['twigs', (c, r) => paintTwigs(c, r), 19],
+];
+
+const QUAD_VERT = /* glsl */`
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4( position.xy, 0.0, 1.0 );
+}
+`;
+
+/** Tileable GPU noise: hash (no sin), periodic gradient noise, fbm, periodic Worley. */
+export const GLSL_TILE_NOISE = /* glsl */`
+vec2 tnHash22( vec2 p ) {
+  vec3 p3 = fract( vec3( p.xyx ) * vec3( 0.1031, 0.1030, 0.0973 ) );
+  p3 += dot( p3, p3.yzx + 33.33 );
+  return fract( ( p3.xx + p3.yz ) * p3.zy );
+}
+float tnHash12( vec2 p ) {
+  vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
+  p3 += dot( p3, p3.yzx + 33.33 );
+  return fract( ( p3.x + p3.y ) * p3.z );
+}
+float tnGrad( vec2 p, vec2 per, float seed ) {
+  vec2 i = floor( p );
+  vec2 f = p - i;
+  vec2 u = f * f * f * ( f * ( f * 6.0 - 15.0 ) + 10.0 );
+  vec2 s = vec2( seed * 37.0, seed * 91.0 );
+  vec2 g00 = tnHash22( mod( i, per ) + s ) * 2.0 - 1.0;
+  vec2 g10 = tnHash22( mod( i + vec2( 1.0, 0.0 ), per ) + s ) * 2.0 - 1.0;
+  vec2 g01 = tnHash22( mod( i + vec2( 0.0, 1.0 ), per ) + s ) * 2.0 - 1.0;
+  vec2 g11 = tnHash22( mod( i + vec2( 1.0, 1.0 ), per ) + s ) * 2.0 - 1.0;
+  float a = dot( g00, f );
+  float b = dot( g10, f - vec2( 1.0, 0.0 ) );
+  float c = dot( g01, f - vec2( 0.0, 1.0 ) );
+  float d = dot( g11, f - vec2( 1.0, 1.0 ) );
+  return mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y ) * 1.7;
+}
+// uv in [0,1), freq = integer lattice cells per tile for the first octave
+float tnFbm( vec2 uv, vec2 freq, int oct, float seed ) {
+  float s = 0.0;
+  float a = 1.0;
+  float n = 0.0;
+  for ( int o = 0; o < 7; o ++ ) {
+    if ( o >= oct ) break;
+    s += a * tnGrad( uv * freq, freq, seed + float( o ) * 1.7 );
+    n += a;
+    freq *= 2.0;
+    a *= 0.5;
+  }
+  return s / n;
+}
+// returns ( f1, f2, cell id ) in cell units
+vec3 tnWorley( vec2 uv, vec2 cells, float jitter, float seed ) {
+  vec2 p = uv * cells;
+  vec2 i = floor( p );
+  vec2 f = p - i;
+  float d1 = 8.0;
+  float d2 = 8.0;
+  float id = 0.0;
+  vec2 s = vec2( seed * 13.0, seed * 29.0 );
+  for ( int y = - 1; y <= 1; y ++ ) {
+    for ( int x = - 1; x <= 1; x ++ ) {
+      vec2 g = vec2( float( x ), float( y ) );
+      vec2 c = mod( i + g, cells );
+      vec2 o = 0.5 + ( tnHash22( c + s ) - 0.5 ) * jitter;
+      vec2 r = g + o - f;
+      float d = dot( r, r );
+      if ( d < d1 ) { d2 = d1; d1 = d; id = tnHash12( c + s + 17.0 ); } else if ( d < d2 ) { d2 = d; }
+    }
+  }
+  return vec3( sqrt( d1 ), sqrt( d2 ), id );
+}
+`;
+
+const BARK_FRAG = /* glsl */`
+uniform int uType;
+varying vec2 vUv;
+${GLSL_TILE_NOISE}
+vec3 C( float r, float g, float b ) { return vec3( r, g, b ) / 255.0; }
+
+float lenticels( vec2 uv ) {
+  vec2 cells = vec2( 4.0, 34.0 );
+  vec2 p = uv * cells;
+  vec2 i = floor( p );
+  float m = 0.0;
+  for ( int y = - 1; y <= 1; y ++ ) {
+    for ( int x = - 1; x <= 1; x ++ ) {
+      vec2 g = vec2( float( x ), float( y ) );
+      vec2 c = mod( i + g, cells );
+      vec2 h = tnHash22( c + 51.0 );
+      float on = step( 0.22, tnHash12( c + 53.0 ) );
+      vec2 d = p - ( i + g + h );
+      float len = 0.12 + 0.85 * tnHash12( c + 55.0 ) * tnHash12( c + 57.0 );
+      float th = 0.08 + 0.14 * tnHash12( c + 59.0 );
+      float ax = abs( d.x ) / len;
+      float taper = max( 0.0, 1.0 - ax * ax );
+      float dy = abs( d.y - d.x * 0.02 );
+      float v = on * step( ax, 1.0 ) * ( 1.0 - smoothstep( th * taper * 0.45, th * taper + 1e-4, dy ) );
+      m = max( m, v * ( 0.55 + 0.45 * tnHash12( c + 61.0 ) ) );
+    }
+  }
+  return m;
+}
+
+vec4 barkPine( vec2 uv ) {
+  vec2 w = vec2( tnFbm( uv, vec2( 4.0 ), 4, 1.0 ), tnFbm( uv, vec2( 4.0 ), 4, 7.0 ) );
+  vec3 W = tnWorley( uv + w * vec2( 0.05, 0.07 ), vec2( 7.0, 3.0 ), 0.9, 3.0 );
+  float mid = tnFbm( uv, vec2( 16.0 ), 3, 11.0 );
+  float horz = tnFbm( uv, vec2( 4.0, 40.0 ), 3, 13.0 );
+  float vert = tnFbm( uv, vec2( 48.0, 3.0 ), 3, 17.0 );
+  float e = W.y - W.x + mid * 0.05;
+  float plate = smoothstep( 0.03, 0.16, e );
+  float fl = horz * 3.5 + mid;
+  float lip = smoothstep( 0.0, 0.18, abs( fl - floor( fl + 0.5 ) ) );
+  float h = plate * ( 0.55 + 0.2 * mid + 0.12 * lip + 0.12 * smoothstep( 0.15, 0.5, e ) ) + 0.04 * vert;
+  vec3 c = mix( C( 96.0, 84.0, 76.0 ), C( 132.0, 86.0, 66.0 ), W.z ) * ( 0.82 + 0.22 * mid + 0.1 * lip );
+  c = mix( c, C( 150.0, 86.0, 60.0 ), ( 1.0 - lip ) * plate * 0.55 );
+  c = mix( C( 30.0, 24.0, 21.0 ), c, plate );
+  return vec4( c, h );
+}
+
+vec4 barkAraucaria( vec2 uv ) {
+  float low = tnFbm( uv, vec2( 4.0 ), 4, 21.0 );
+  float mid = tnFbm( uv, vec2( 16.0 ), 3, 22.0 );
+  float vert = tnFbm( uv, vec2( 48.0, 3.0 ), 3, 23.0 );
+  float f = fract( uv.y * 10.0 + low * 0.5 + vert * 0.08 );
+  float ring = smoothstep( 0.0, 0.07, f ) * ( 1.0 - smoothstep( 0.1, 0.32, f ) );
+  float groove = smoothstep( 0.86, 1.0, f );
+  float crack = 1.0 - smoothstep( 0.0, 0.12, abs( vert * 2.2 ) );
+  float h = 0.5 + 0.12 * vert + 0.22 * ring - 0.28 * groove - 0.09 * crack + 0.07 * mid;
+  vec3 c = C( 108.0, 98.0, 90.0 ) * ( 0.84 + 0.2 * low + 0.12 * vert + 0.06 * mid );
+  c = mix( c, C( 58.0, 50.0, 46.0 ), max( groove * 0.7, crack * 0.35 ) );
+  c = mix( c, C( 132.0, 120.0, 106.0 ), ring * 0.3 );
+  return vec4( c, h );
+}
+
+vec4 barkSpruce( vec2 uv ) {
+  vec2 w = vec2( tnFbm( uv, vec2( 4.0 ), 4, 31.0 ), tnFbm( uv, vec2( 4.0 ), 4, 32.0 ) );
+  vec3 W = tnWorley( uv + w * vec2( 0.017, 0.02 ), vec2( 15.0, 13.0 ), 0.9, 33.0 );
+  float low = tnFbm( uv, vec2( 4.0 ), 4, 34.0 );
+  float mid = tnFbm( uv, vec2( 16.0 ), 3, 35.0 );
+  float vert = tnFbm( uv, vec2( 48.0, 3.0 ), 3, 36.0 );
+  float sc = smoothstep( 0.02, 0.2, W.y - W.x );
+  float h = 0.32 + 0.38 * sc + 0.12 * mid + 0.06 * vert;
+  vec3 c = mix( C( 100.0, 88.0, 78.0 ), C( 124.0, 84.0, 68.0 ), W.z ) * ( 0.86 + 0.2 * low + 0.1 * mid );
+  c = mix( c, C( 52.0, 42.0, 36.0 ), ( 1.0 - sc ) * 0.75 );
+  return vec4( c, h );
+}
+
+vec4 barkBirch( vec2 uv ) {
+  float low = tnFbm( uv, vec2( 4.0 ), 4, 41.0 );
+  float low2 = tnFbm( uv, vec2( 4.0 ), 4, 42.0 );
+  float mid = tnFbm( uv, vec2( 16.0 ), 3, 43.0 );
+  float horz = tnFbm( uv, vec2( 4.0, 40.0 ), 3, 44.0 );
+  float patchy = smoothstep( 0.3, 0.48, low2 * 0.9 + horz * 0.45 );
+  float l = lenticels( uv );
+  float h = 0.6 + 0.08 * mid - 0.45 * l - 0.15 * patchy;
+  vec3 c = C( 226.0, 222.0, 210.0 ) * ( 0.94 + 0.08 * low + 0.04 * mid );
+  c = mix( c, C( 214.0, 190.0, 168.0 ), smoothstep( 0.1, 0.5, low ) * 0.35 );
+  c = mix( c, C( 46.0, 42.0, 40.0 ), patchy * 0.85 );
+  c = mix( c, C( 52.0, 46.0, 44.0 ), l );
+  return vec4( c, h );
+}
+
+vec4 barkOak( vec2 uv ) {
+  vec2 w = vec2( tnFbm( uv, vec2( 4.0 ), 4, 51.0 ), tnFbm( uv, vec2( 4.0 ), 4, 52.0 ) );
+  vec3 W = tnWorley( uv + w * vec2( 0.055, 0.05 ), vec2( 11.0, 3.0 ), 0.9, 53.0 );
+  float low = tnFbm( uv, vec2( 4.0 ), 4, 54.0 );
+  float mid = tnFbm( uv, vec2( 16.0 ), 3, 55.0 );
+  float vert = tnFbm( uv, vec2( 48.0, 3.0 ), 3, 56.0 );
+  float horz = tnFbm( uv, vec2( 4.0, 40.0 ), 3, 57.0 );
+  float e = W.y - W.x + vert * 0.06;
+  float crossing = smoothstep( 0.55, 0.75, abs( horz * 2.0 ) ) * 0.6;
+  float ridge = smoothstep( 0.05, 0.3, e ) * ( 1.0 - crossing );
+  float h = ridge * ( 0.72 + 0.14 * mid ) + 0.04 + 0.04 * vert;
+  float top = smoothstep( 0.45, 0.8, h );
+  vec3 c = mix( C( 70.0, 64.0, 57.0 ), C( 116.0, 110.0, 100.0 ), top ) * ( 0.86 + 0.18 * mid + 0.1 * low );
+  c = mix( c, C( 30.0, 31.0, 24.0 ), 1.0 - smoothstep( 0.0, 0.25, ridge ) );
+  return vec4( c, h );
+}
+
+vec4 barkDead( vec2 uv ) {
+  vec2 w = vec2( tnFbm( uv, vec2( 4.0 ), 4, 61.0 ), tnFbm( uv, vec2( 4.0 ), 4, 62.0 ) );
+  vec3 W = tnWorley( uv + w * vec2( 0.028, 0.1 ), vec2( 9.0, 1.0 ), 0.9, 63.0 );
+  float low = tnFbm( uv, vec2( 4.0 ), 4, 64.0 );
+  float low2 = tnFbm( uv, vec2( 4.0 ), 4, 65.0 );
+  float mid = tnFbm( uv, vec2( 16.0 ), 3, 66.0 );
+  float vert = tnFbm( uv, vec2( 48.0, 3.0 ), 3, 67.0 );
+  float crack = 1.0 - smoothstep( 0.0, 0.05, W.y - W.x + vert * 0.03 );
+  float rem = smoothstep( 0.42, 0.5, low2 + mid * 0.2 );
+  float h = 0.55 + 0.2 * vert - 0.45 * crack + rem * ( 0.12 + 0.12 * mid );
+  vec3 c = C( 146.0, 141.0, 132.0 ) * ( 0.9 + 0.2 * vert + 0.08 * mid );
+  c = mix( c, C( 124.0, 110.0, 92.0 ), smoothstep( -0.2, 0.35, low ) * 0.3 );
+  c = mix( c, C( 72.0, 60.0, 50.0 ), rem );
+  c = mix( c, C( 36.0, 33.0, 30.0 ), crack );
+  return vec4( c, h );
+}
+
+void main() {
+  vec4 r;
+  if ( uType == 0 ) r = barkPine( vUv );
+  else if ( uType == 1 ) r = barkAraucaria( vUv );
+  else if ( uType == 2 ) r = barkSpruce( vUv );
+  else if ( uType == 3 ) r = barkBirch( vUv );
+  else if ( uType == 4 ) r = barkOak( vUv );
+  else r = barkDead( vUv );
+  gl_FragColor = r;
+}
+`;
+
+const SRGB_GLSL = /* glsl */`
+vec3 tnToLinear( vec3 c ) {
+  return mix( c * 0.0773993808, pow( c * 0.9478672986 + 0.0521327014, vec3( 2.4 ) ), step( 0.04045, c ) );
+}
+`;
+
+// pass B/C: albedo (sRGB -> linear, the target re-encodes) and normal from the height channel
+const BARK_OUT_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform int uMode;
+uniform vec2 uTexel;
+uniform float uStrength;
+varying vec2 vUv;
+${SRGB_GLSL}
+void main() {
+  if ( uMode == 0 ) {
+    gl_FragColor = vec4( tnToLinear( clamp( texture2D( tSrc, vUv ).rgb, 0.0, 1.0 ) ), 1.0 );
+  } else {
+    float hl = texture2D( tSrc, vUv - vec2( uTexel.x, 0.0 ) ).a;
+    float hr = texture2D( tSrc, vUv + vec2( uTexel.x, 0.0 ) ).a;
+    float hd = texture2D( tSrc, vUv - vec2( 0.0, uTexel.y ) ).a;
+    float hu = texture2D( tSrc, vUv + vec2( 0.0, uTexel.y ) ).a;
+    vec3 n = normalize( vec3( - ( hr - hl ) * uStrength, - ( hu - hd ) * uStrength, 1.0 ) );
+    gl_FragColor = vec4( n * 0.5 + 0.5, 1.0 );
+  }
+}
+`;
+
+// pull-push dilation of a premultiplied, mipmapped canvas texture (values are sRGB-encoded)
+const DILATE_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform float uMaxLod;
+varying vec2 vUv;
+${SRGB_GLSL}
+void main() {
+  vec4 top = textureLod( tSrc, vUv, uMaxLod );
+  vec3 fill = top.rgb / max( top.a, 1e-4 );
+  for ( int l = 12; l >= 0; l -- ) {
+    float fl = float( l );
+    if ( fl >= uMaxLod ) continue;
+    vec4 s = textureLod( tSrc, vUv, fl );
+    fill = s.rgb + ( 1.0 - s.a ) * fill;
+  }
+  gl_FragColor = vec4( tnToLinear( clamp( fill, 0.0, 1.0 ) ), textureLod( tSrc, vUv, 0.0 ).a );
+}
+`;
+
+function makeArrayTarget(S, layers, srgb, anisotropy) {
+  const rt = new THREE.WebGLArrayRenderTarget(S, S, layers, { depthBuffer: false });
+  const t = rt.texture;
+  t.format = THREE.RGBAFormat;
+  t.type = THREE.UnsignedByteType;
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.anisotropy = anisotropy;
+  t.generateMipmaps = false;
+  return rt;
+}
+
+/**
+ * Generates the vegetation albedo array (sRGB, alpha = coverage) and the bark normal-map array
+ * on the GPU (bark: procedural shader; foliage: canvas painting + pull-push dilation).
+ * @param {THREE.WebGLRenderer} renderer
+ * @param {number} size texture resolution per layer (power of two)
+ * @param {number} anisotropy
+ * @returns {{ albedo: THREE.DataArrayTexture, normal: THREE.DataArrayTexture, size: number, timings: object, dispose: Function }}
+ */
+export function createVegetationTextures(renderer, size = 512, anisotropy = 4) {
+  const t0 = performance.now();
+  const S = size;
+  const albedoRT = makeArrayTarget(S, VEG_LAYER_COUNT, true, anisotropy);
+  const normalRT = makeArrayTarget(S, VEG_BARK_LAYERS, false, anisotropy);
+  const halfFloat = renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
+  const temp = new THREE.WebGLRenderTarget(S, S, {
+    type: halfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType,
+    wrapS: THREE.RepeatWrapping,
+    wrapT: THREE.RepeatWrapping,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    generateMipmaps: false,
+    depthBuffer: false,
+  });
+  const barkMat = new THREE.ShaderMaterial({ uniforms: { uType: { value: 0 } }, vertexShader: QUAD_VERT, fragmentShader: BARK_FRAG });
+  const outMat = new THREE.ShaderMaterial({
+    uniforms: { tSrc: { value: temp.texture }, uMode: { value: 0 }, uTexel: { value: new THREE.Vector2(1 / S, 1 / S) }, uStrength: { value: 1 } },
+    vertexShader: QUAD_VERT,
+    fragmentShader: BARK_OUT_FRAG,
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  const canvasTex = new THREE.CanvasTexture(canvas);
+  canvasTex.premultiplyAlpha = true;
+  canvasTex.colorSpace = THREE.NoColorSpace;
+  canvasTex.minFilter = THREE.LinearMipmapLinearFilter;
+  canvasTex.generateMipmaps = true;
+  const dilateMat = new THREE.ShaderMaterial({
+    uniforms: { tSrc: { value: canvasTex }, uMaxLod: { value: Math.log2(S) } },
+    vertexShader: QUAD_VERT,
+    fragmentShader: DILATE_FRAG,
+  });
+  for (const m of [barkMat, outMat, dilateMat]) { m.depthTest = false; m.depthWrite = false; m.toneMapped = false; }
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), barkMat);
+  quad.frustumCulled = false;
+  const scene = new THREE.Scene();
+  scene.add(quad);
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const prev = { target: renderer.getRenderTarget(), auto: renderer.autoClear, shadow: renderer.shadowMap.autoUpdate };
+  renderer.autoClear = false;
+  renderer.shadowMap.autoUpdate = false;
+  const pass = (mat, target, layer) => {
+    quad.material = mat;
+    renderer.setRenderTarget(target, layer);
+    renderer.render(scene, cam);
+  };
+  const strengthScale = S / 512;
+  for (let l = 0; l < VEG_BARK_LAYERS; l++) {
+    barkMat.uniforms.uType.value = l;
+    pass(barkMat, temp, 0);
+    outMat.uniforms.uMode.value = 0;
+    pass(outMat, albedoRT, l);
+    outMat.uniforms.uMode.value = 1;
+    outMat.uniforms.uStrength.value = BARK_STRENGTH[l] * strengthScale;
+    pass(outMat, normalRT, l);
+  }
+  const t1 = performance.now();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  let paintMs = 0;
+  for (const [name, paint, seed] of FOLIAGE) {
+    const ta = performance.now();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, S, S);
+    ctx.setTransform(S, 0, 0, S, 0, 0);
+    paint(ctx, mulberry32(seed * 977));
+    paintMs += performance.now() - ta;
+    canvasTex.needsUpdate = true;
+    pass(dilateMat, albedoRT, VEG_LAYERS[name]);
+  }
+  // build the mip chains once
+  for (const rt of [albedoRT, normalRT]) {
+    rt.texture.generateMipmaps = true;
+    quad.visible = false;
+    renderer.setRenderTarget(rt, 0);
+    renderer.render(scene, cam);
+    quad.visible = true;
+  }
+  renderer.setRenderTarget(prev.target);
+  renderer.autoClear = prev.auto;
+  renderer.shadowMap.autoUpdate = prev.shadow;
+  temp.dispose();
+  canvasTex.dispose();
+  quad.geometry.dispose();
+  for (const m of [barkMat, outMat, dilateMat]) m.dispose();
+  const t2 = performance.now();
+  return {
+    albedo: albedoRT.texture,
+    normal: normalRT.texture,
+    size: S,
+    timings: { bark: t1 - t0, foliage: t2 - t1, paint: paintMs },
+    dispose() {
+      albedoRT.dispose();
+      normalRT.dispose();
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Rock textures (used by rocks.js): tileable granite albedo (+ lichen mask in alpha) and normal.
 // ---------------------------------------------------------------------------------------------

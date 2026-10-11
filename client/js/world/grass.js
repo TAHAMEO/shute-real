@@ -88,6 +88,7 @@ function makeMaterial(shared, patch) {
         uniform float uDensity;
         uniform vec3 uColBase, uColTip, uColDry;
         uniform float uDryness;
+        uniform vec3 uSunDir;
         varying vec3 vGrassCol;
         varying float vGrassT;
         ${GLSL_NOISE}
@@ -139,8 +140,10 @@ function makeMaterial(shared, patch) {
         p.xz += side * position.x * width + fw * bend + windOff;
         p.y += t * h * (1.0 - 0.25 * (sway + 0.3) * t);
         gPos = p;
-        vec3 bladeN = normalize(vec3(fw.x, 0.25, fw.y));
-        vec3 objectNormal = normalize(mix(bladeN, vec3(0.0, 1.0, 0.0), 0.55));
+        // Foliage lighting trick: tilt normals toward the sun (plus per-blade variation) so a low
+        // sun still lights the field; real shadows still darken blades through the shadow map.
+        vec3 sunH = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + 1e-4);
+        vec3 objectNormal = normalize(vec3(0.0, 1.0, 0.0) + sunH * 0.55 + vec3(fw.x, 0.0, fw.y) * 0.35);
         #ifdef USE_TANGENT
           vec3 objectTangent = vec3(1.0, 0.0, 0.0);
         #endif
@@ -159,6 +162,7 @@ function makeMaterial(shared, patch) {
         uniform vec3 uSunCol;
       `)
       .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vGrassCol;')
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n normal = normalize(vNormal);')
       .replace('#include <opaque_fragment>', `
         {
           // Back-lit translucency (sun shining through the blades), modulated by received direct light.
@@ -202,6 +206,7 @@ export class GrassSystem {
       uColDry: { value: new THREE.Color('#c9b06a') },
       uDryness: { value: grass.dryness ?? 0.4 },
       uSunDirView: { value: new THREE.Vector3() },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) },
       uSunCol: { value: new THREE.Color(env.sun.color).multiplyScalar(env.sun.intensity * 0.35) },
     };
     const height = grass.height ?? 0.55;
@@ -239,6 +244,7 @@ export class GrassSystem {
 
   setSunDir(dir) {
     this.sunDir.copy(dir);
+    this.shared.uSunDir.value.copy(dir);
   }
 
   update(camera, time) {

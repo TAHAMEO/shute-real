@@ -408,7 +408,7 @@ function smearTap(h, sr, rng, t, amp, smear, lpHz, spike = 0.6, rise = 0) {
   if (spike) h[i0] += amp * spike;
   for (let i = 0; i < n && i0 + i < h.length; i++) {
     s1 = s1 * a + (1 - a) * rng.bi() * 3; s2 = s2 * a + (1 - a) * s1; // 2-pole low-pass
-    const e = i < nr ? 0.5 - 0.5 * Math.cos((Math.PI * i) / nr) : g;
+    const e = i < nr ? amp * (0.5 - 0.5 * Math.cos((Math.PI * i) / nr)) : g;
     if (i >= nr) g *= k;
     h[i0 + i] += (spike ? s1 : s2 * 1.6) * e * 0.5;
   }
@@ -447,7 +447,7 @@ export function outdoorIRChannel(sr, rng, c, { dur = 2.6, rt60 = 2.4 } = {}) {
     smearTap(h, sr, rng, tt, amp, 0.0004 + k * 0.0003, 9000 - k * 600);
   });
   // dull, smeared slap-backs from tree lines / terrain
-  [[0.27, 0.065], [0.44, 0.05], [0.71, 0.04], [1.08, 0.028], [1.55, 0.018]].forEach(([t, a], k) => {
+  [[0.27, 0.13], [0.44, 0.1], [0.71, 0.075], [1.08, 0.05], [1.55, 0.032]].forEach(([t, a], k) => {
     smearTap(h, sr, rng, t * rng.range(0.9, 1.12) + c * 0.004, a * rng.range(0.7, 1.2), 0.03 + k * 0.018, 1700 - k * 250, 0, 0.012 + k * 0.006);
   });
   diffuseTail(h, sr, rng, { start: 0.008, build: 0.07, rt60: rt60 * rng.range(0.95, 1.05), amp: 0.16, fHi: 5200, fLo: 420, fTau: 0.38 });
@@ -660,7 +660,7 @@ export const GUN_PROFILES = {
   sniper50: G({ T: 0.0016, crackHP: 420, crackLvl: 1, crackNoise: 0.006, crackNoiseAmt: 0.75, boomF0: 70, boomF1: 32,
     boomDrop: 0.032, boomDecay: 0.1, boomLvl: 1, rumbleLvl: 0.8, rumbleLP: 180, bodyLP: 2700, bodyDecay: 0.085,
     bodyLvl: 0.95, brightDecay: 0.022, brightLvl: 0.55, blastF: 720, blastQ: 0.7, blastDecay: 0.036, blastLvl: 0.85, er: 0.4,
-    drive: 3.2, mech: 'barrett', mechLvl: 0.28, loud: 2.5, tail: 1.9, far: 'fifty', len: 0.75 }),
+    drive: 3.2, mech: 'barrett', mechLvl: 0.28, loud: 1.5, tail: 1.9, far: 'fifty', len: 0.75 }),
   shotgun: G({ T: 0.0012, crackHP: 520, crackLvl: 0.75, crackNoise: 0.005, crackNoiseAmt: 0.7, boomF0: 95, boomF1: 44,
     boomDrop: 0.024, boomDecay: 0.07, boomLvl: 0.85, rumbleLvl: 0.65, rumbleLP: 220, bodyLP: 2300, bodyDecay: 0.06,
     bodyLvl: 0.9, brightDecay: 0.016, brightLvl: 0.4, blastF: 620, blastQ: 0.7, blastDecay: 0.03, blastLvl: 0.85, er: 0.36,
@@ -1083,7 +1083,7 @@ function stepLayer(s, x, surface, t, k) {
       break;
     case 'wood': {
       const f0 = r.j(150, 0.12);
-      [1, 2.31, 4.07, 6.72].forEach((m, i) => s.mode(x, t, f0 * m * r.j(1, 0.04), (0.05 - i * 0.01) * r.j(1, 0.2), (0.6 / (i + 1)) * k, r.f() * TAU));
+      [1, 2.31, 4.07, 6.72].forEach((m, i) => s.mode(x, t, f0 * m * r.j(1, 0.04), (0.032 - i * 0.006) * r.j(1, 0.2), (0.6 / (i + 1)) * k, r.f() * TAU));
       s.addNoise(x, t, 0.35 * k, { attack: 0, decay: 0.004, filters: [['lowpass', 4000], ['highpass', 300]] });
       s.addNoise(x, t, 0.3 * k, { attack: 0.0005, decay: 0.012, filters: [['bandpass', r.j(700, 0.1), 2]] });
       break;
@@ -1465,7 +1465,7 @@ function rRockfall(g, s) {
 }
 
 /** Seamless pink-ish wind noise bed (JS only). */
-export function windNoise(sr, rng, dur = 6) {
+export function windNoise(sr, rng, dur = 5) {
   const xf = Math.round(sr * 0.5); const n = Math.ceil(dur * sr) + xf;
   const x = new Float32Array(n);
   let b0 = 0; let b1 = 0; let b2 = 0;
@@ -1479,7 +1479,7 @@ export function windNoise(sr, rng, dur = 6) {
 }
 
 /** Seamless loop of distant crickets + faint insect hiss (JS only). Integer cycles -> loops perfectly. */
-export function insectLoop(sr, rng, dur = 6) {
+export function insectLoop(sr, rng, dur = 4.4) {
   const n = Math.round(dur * sr); const x = new Float32Array(n);
   const crickets = [[4300, 2, 0.5], [4750, 3, 0.35], [5100, 5, 0.25], [3950, 4, 0.3]];
   for (const [fc, rate, amp] of crickets) {
@@ -1644,8 +1644,9 @@ export async function buildBank({ sampleRate, concurrency = 4, onProgress = null
 
   const total = jobs.length + jsAssets.length; let done = 0; let maxBlock = 0; let next = 0; const timings = [];
   const tick = () => { done++; if (onProgress) { try { onProgress(done, total); } catch { /* ignore */ } } };
-  for (const a of jsAssets) {
-    const ts = now(); a(); maxBlock = Math.max(maxBlock, now() - ts); tick();
+  for (let k = 0; k < jsAssets.length; k++) {
+    const ts = now(); jsAssets[k](); const tb = now() - ts;
+    maxBlock = Math.max(maxBlock, tb); timings.push({ name: `js.asset${k}`, build: tb, render: 0, fin: 0, bytes: 0 }); tick();
     await new Promise((res) => setTimeout(res, 0));
   }
   const worker = async () => {

@@ -1,12 +1,12 @@
 // Dev preview for client/js/world/vegetation.js and rocks.js.
-// Views: ?view=lineup | forest | rocks | closeup&species=pine | textures
+// Views: ?view=lineup | forest | rocks | closeup&species=pine
 // Options: &sun=golden|noon|overcast  &t=<wind time>  &wind=0..1  &q=low|medium|high|ultra
 //          &species=<name> (lineup/closeup)  &v=<variant> (closeup)  &frames=N  &info=0
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { VegetationSystem, TREE_SPECIES, BUSH_SPECIES } from '../js/world/vegetation.js';
 import { RockSystem, ROCK_TYPES } from '../js/world/rocks.js';
-import { mulberry32, createVegetationTextures, VEG_LAYERS, VEG_BARK_LAYERS, createRockTextures } from '../js/world/vegetation-textures.js';
+import { mulberry32 } from '../js/world/vegetation-textures.js';
 
 const params = new URLSearchParams(location.search);
 const view = params.get('view') || 'lineup';
@@ -21,67 +21,11 @@ if (params.get('info') === '0') info.style.display = 'none';
 const SUNS = {
   golden: { el: 9, az: 230, color: '#ffd2a0', intensity: 3.4, sky: { turbidity: 5.5, rayleigh: 2.4, mieCoefficient: 0.007, mieDirectionalG: 0.86, cloudCoverage: 0.32, cloudDensity: 0.45 }, fog: '#cdb995', fogDensity: 0.0011, env: 0.75, exposure: 0.62, ground: '#6f6c3c' },
   noon: { el: 58, az: 150, color: '#fff3e2', intensity: 3.6, sky: { turbidity: 3, rayleigh: 1.1, mieCoefficient: 0.004, mieDirectionalG: 0.8, cloudCoverage: 0.25, cloudDensity: 0.35 }, fog: '#b9c8d8', fogDensity: 0.0008, env: 0.9, exposure: 0.55, ground: '#56632f' },
-  overcast: { el: 38, az: 200, color: '#e4e8ee', intensity: 0.9, sky: { turbidity: 10, rayleigh: 0.6, mieCoefficient: 0.02, mieDirectionalG: 0.7, cloudCoverage: 0.92, cloudDensity: 0.85 }, fog: '#a3a8ad', fogDensity: 0.0016, env: 1.5, exposure: 0.85, ground: '#5d6150' },
+  overcast: { el: 38, az: 200, color: '#e4e8ee', intensity: 1.1, sky: { turbidity: 10, rayleigh: 0.6, mieCoefficient: 0.02, mieDirectionalG: 0.7, cloudCoverage: 0.92, cloudDensity: 0.85 }, fog: '#9ea3a6', fogDensity: 0.0016, env: 0.42, exposure: 0.5, ground: '#55594a' },
 };
 const sun = SUNS[sunName] || SUNS.golden;
 
-// ------------------------------------------------------------------------------------------------
-// Textures debug view (no WebGL needed)
-// ------------------------------------------------------------------------------------------------
-if (view === 'textures') {
-  const size = parseInt(params.get('size') || '256', 10);
-  const t0 = performance.now();
-  const tex = createVegetationTextures(size, 1);
-  const rock = createRockTextures(size, 1);
-  const ms = performance.now() - t0;
-  const cols = 6;
-  const layers = [];
-  const nameOf = Object.fromEntries(Object.entries(VEG_LAYERS).map(([k, v]) => [v, k]));
-  for (let l = 0; l < tex.albedo.image.depth; l++) layers.push({ name: nameOf[l], data: tex.albedo.image.data, offset: l * size * size * 4, alpha: l >= VEG_BARK_LAYERS });
-  for (let l = 0; l < VEG_BARK_LAYERS; l++) layers.push({ name: `${nameOf[l]} N`, data: tex.normal.image.data, offset: l * size * size * 4 });
-  layers.push({ name: 'rock albedo', data: rock.albedo.image.data, offset: 0 });
-  layers.push({ name: 'rock lichen mask', data: rock.albedo.image.data, offset: 0, alphaOnly: true });
-  layers.push({ name: 'rock normal', data: rock.normal.image.data, offset: 0 });
-  const c = document.createElement('canvas');
-  const rows = Math.ceil(layers.length / cols);
-  c.width = cols * (size + 8);
-  c.height = rows * (size + 22);
-  document.body.appendChild(c);
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#7a8a9a';
-  ctx.fillRect(0, 0, c.width, c.height);
-  layers.forEach((L, i) => {
-    const img = ctx.createImageData(size, size);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const s = L.offset + ((size - 1 - y) * size + x) * 4;
-        const d = (y * size + x) * 4;
-        if (L.alphaOnly) {
-          img.data[d] = img.data[d + 1] = img.data[d + 2] = L.data[s + 3];
-          img.data[d + 3] = 255;
-        } else {
-          const a = L.alpha ? L.data[s + 3] / 255 : 1;
-          const bg = ((x >> 4) + (y >> 4)) & 1 ? 150 : 110;
-          img.data[d] = L.data[s] * a + bg * (1 - a);
-          img.data[d + 1] = L.data[s + 1] * a + bg * (1 - a);
-          img.data[d + 2] = L.data[s + 2] * a + bg * (1 - a);
-          img.data[d + 3] = 255;
-        }
-      }
-    }
-    const x0 = (i % cols) * (size + 8) + 4;
-    const y0 = Math.floor(i / cols) * (size + 22) + 18;
-    ctx.putImageData(img, x0, y0);
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px monospace';
-    ctx.fillText(L.name, x0, y0 - 4);
-  });
-  info.textContent = `textures generated in ${ms.toFixed(0)} ms (bark ${tex.timings.bark.toFixed(0)} ms, foliage ${tex.timings.foliage.toFixed(0)} ms)`;
-  console.log(info.textContent);
-  window.__READY = true;
-} else {
-  main();
-}
+main();
 
 // ------------------------------------------------------------------------------------------------
 // 3D views
@@ -208,11 +152,16 @@ function forestScene() {
     const r = rng();
     bushes.push({ x, y: 0, z, rot: rng() * 6.28, scale: 0.6 + rng() * 0.8, species: r < 0.5 ? 'shrub' : r < 0.8 ? 'juniper' : 'fern' });
   }
-  for (let i = 0; i < 40; i++) {
-    const x = (rng() - 0.5) * 300;
-    const z = 30 - rng() * 300;
-    const s = 0.8 + rng() * 2.6;
-    rocks.push({ x, y: s * 0.5 * 0.3, z, rotY: rng() * 6.28, sx: s * (0.8 + rng() * 0.4), sy: s * (0.55 + rng() * 0.3), sz: s * (0.8 + rng() * 0.4), type: rng() < 0.3 ? 'slab' : 'boulder' });
+  const nr = parseInt(params.get('rocks') || '60', 10);
+  for (let i = 0; i < nr; i++) {
+    const far = i > 60;
+    const x = (rng() - 0.5) * (far ? 1800 : 300);
+    const z = (far ? 900 : 30) - rng() * (far ? 1800 : 300);
+    const r = rng();
+    const type = r < 0.3 ? 'slab' : r < 0.45 && far ? 'cliff' : r < 0.55 && far ? 'spire' : r < 0.75 ? 'pebble' : 'boulder';
+    const s = type === 'pebble' ? 0.25 + rng() * 0.35 : far ? 1.5 + rng() * 6 : 0.8 + rng() * 2.6;
+    const st = type === 'spire' ? [0.6, 2.6, 0.6] : type === 'cliff' ? [1.6, 0.9, 1.0] : type === 'slab' ? [1.5, 0.45, 1.1] : [1, 0.7, 1];
+    rocks.push({ x, y: s * st[1] * 0.3, z, rotY: rng() * 6.28, sx: s * st[0] * (0.8 + rng() * 0.4), sy: s * st[1], sz: s * st[2] * (0.8 + rng() * 0.4), type });
   }
   return { trees, bushes, rocks, cam: { pos: [0, 1.7, 40], look: [8, 5, -120], fov: 62 }, shadowCenter: [0, 0, -20], shadowSize: 110 };
 }
@@ -238,12 +187,12 @@ function rocksScene() {
     else if (r < 0.8) add(x, z, 'cliff', s, 0.3, [1.3 + rng() * 0.7, 0.7 + rng() * 0.4, 0.8 + rng() * 0.4]);
     else add(x, z, 'boulder', s * 0.6, 0.3);
   }
-  // boulder clusters nearer
+  // boulder clusters nearer (the first one right in front of the camera)
   for (let c = 0; c < 26; c++) {
-    const cx = (rng() - 0.5) * 220;
-    const cz = 10 - rng() * 240;
+    const cx = c === 0 ? 4 : (rng() - 0.5) * 220;
+    const cz = c === 0 ? 12 : 10 - rng() * 240;
     const n = 3 + Math.floor(rng() * 5);
-    const spire = rng() < 0.4;
+    const spire = c === 0 || rng() < 0.4;
     for (let i = 0; i < n; i++) {
       const x = cx + (rng() - 0.5) * 18;
       const z = cz + (rng() - 0.5) * 18;

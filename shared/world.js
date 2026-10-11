@@ -57,7 +57,7 @@ const GEN = {
     env: {
       sun: { elevation: 9, azimuth: 248, color: '#ffd2a0', intensity: 3.4 },
       sky: { turbidity: 5.5, rayleigh: 2.4, mieCoefficient: 0.007, mieDirectionalG: 0.86, cloudCoverage: 0.32, cloudDensity: 0.45 },
-      fog: { color: '#cdb995', density: 0.00075, heightFalloff: 0.006 },
+      fog: { color: '#cdb995', density: 0.00048, heightFalloff: 0.006 },
       hemi: { sky: '#aebfe0', ground: '#6b5a3c', intensity: 0.55 },
       exposure: 0.95,
       grass: { base: '#5f6b22', tip: '#d9c27a', dryness: 0.55, height: 0.62, density: 1.0 },

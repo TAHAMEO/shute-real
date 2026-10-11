@@ -507,3 +507,4 @@ function frontPostPts(sy, y0, o = {}) {
 }
 
 export const AR_BUILDERS = { m4a1, hk416, scarh, g36c, mk14, m110 };
+export { arReceivers, arGrip, bufferTube, carStock, quadRail, stanag, flatTopSights, ringStemPts, circleHole, frontPostPts, AR_SIGHT_Y, EJECT_ROT };

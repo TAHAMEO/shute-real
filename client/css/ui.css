@@ -1249,3 +1249,13 @@
 .sr-hud.sr-ovl-death .sr-spawnprot, .sr-hud.sr-ovl-death .sr-vignette, .sr-hud.sr-ovl-death .sr-hurt { visibility: hidden; }
 .sr-hud.sr-ovl-end > :not(.sr-me):not(.sr-bl) { visibility: hidden; }
 .sr-hud.sr-ovl-end .sr-health, .sr-hud.sr-ovl-end .sr-squad, .sr-hud.sr-ovl-end .sr-spawnprot { visibility: hidden; }
+
+/* short viewports (≤ 760 px tall): tighten form spacing so setup panels fit without scrolling */
+@media (max-height: 760px) {
+  .sr-form { gap: calc(var(--sr-u) * 10); }
+  .sr-form-row { gap: calc(var(--sr-u) * 5); }
+  .sr-seg-opt { height: calc(var(--sr-u) * 32); }
+  .sr-step-btn { width: calc(var(--sr-u) * 32); height: calc(var(--sr-u) * 32); }
+  .sr-side-panel .sr-panel-body { padding-top: calc(var(--sr-u) * 12); padding-bottom: calc(var(--sr-u) * 12); }
+  .sr-btn-lg { height: calc(var(--sr-u) * 52); }
+}

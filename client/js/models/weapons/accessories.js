@@ -170,32 +170,32 @@ export function magOutline(p) {
   const { fc, yTop, depth, straight, arc = 0, radius = 1, n = 8 } = p;
   const taper = p.taper || 0; // depth change at the bottom (+ = deeper)
   const total = straight + arc;
+  const s0 = p.s0 ?? 0;
+  const s1 = p.s1 ?? total;
+  const sample = (s) => {
+    if (s <= straight) return { x: fc, y: yTop - s, phi: 0 };
+    const phi = (s - straight) / radius;
+    return { x: fc + radius - radius * Math.cos(phi), y: yTop - straight - radius * Math.sin(phi), phi };
+  };
+  const ss = [s0];
+  if (straight > s0 && straight < s1) ss.push(straight);
+  const a0 = Math.max(s0, straight);
+  if (s1 > a0 + 1e-6) {
+    const steps = Math.max(1, Math.ceil(((s1 - a0) / Math.max(arc, 1e-6)) * n));
+    for (let i = 1; i <= steps; i++) ss.push(a0 + ((s1 - a0) * i) / steps);
+  } else if (ss[ss.length - 1] < s1) ss.push(s1);
   const front = [];
   const rear = [];
-  const steps = arc > 0 ? n : 1;
-  const sample = (s) => {
-    let x; let y; let phi;
-    if (s <= straight) { x = fc; y = yTop - s; phi = 0; } else {
-      phi = (s - straight) / radius;
-      x = fc + radius - radius * Math.cos(phi);
-      y = yTop - straight - radius * Math.sin(phi);
-    }
-    return { x, y, phi };
-  };
-  const ss = [0, straight];
-  for (let i = 1; i <= steps; i++) ss.push(straight + (arc * i) / steps);
-  if (arc <= 0) ss.length = 2;
   for (const s of ss) {
     const { x, y, phi } = sample(s);
     const hd = depth / 2 + (taper * s) / total / 2;
     const nx = Math.cos(phi); const ny = Math.sin(phi);
-    front.push([x + nx * (hd + (p.frontBulge || 0) * Math.sin((Math.PI * s) / total)), y + ny * hd]);
+    front.push([x + nx * hd, y + ny * hd]);
     rear.push([x - nx * hd, y - ny * hd]);
   }
-  const end = sample(total);
-  const pts = [...front, ...rear.reverse()];
+  const end = sample(s1);
   return {
-    pts,
+    pts: [...front, ...rear.reverse()],
     bottom: { x: end.x, y: end.y, nx: Math.cos(end.phi), ny: Math.sin(end.phi), tx: Math.sin(end.phi), ty: -Math.cos(end.phi), depth: depth + taper },
   };
 }
@@ -218,17 +218,17 @@ export function boxMag(m, mat, p) {
     const plate = [P(hd + ex, -0.004), P(hd + ex, th - 0.004), P(-hd - ex * 0.5, th - 0.004), P(-hd - ex * 0.5, -0.004)];
     m.side(pm, plate.map((q, i) => [q[0], q[1], i === 1 || i === 2 ? 0.002 : 0]), w + (p.plateWide ?? 0.003), { bevel: 0.0008 });
   }
+  const total = p.straight + (p.arc || 0);
   if (m.fp && p.ribs === 'side') {
-    const inner = magOutline({ ...p, depth: p.depth - 0.012, yTop: p.yTop - (p.ribTop ?? 0.05), straight: Math.max(0.001, p.straight - (p.ribTop ?? 0.05)), arc: Math.max(0, p.arc - 0.012) });
+    const inner = magOutline({ ...p, depth: p.depth - 0.012, s0: p.ribTop ?? 0.05, s1: total - 0.012 });
     m.side(mat, inner.pts, w + 0.0016, { bevel: 0.0006, tint: p.tint });
   } else if (m.fp && p.ribs === 'ak') {
-    // stamped horizontal reinforcement ribs on AK steel magazines
+    // stamped horizontal reinforcement ribs on AK magazines
     const count = p.ribCount || 5;
     for (let i = 0; i < count; i++) {
-      const s = (p.ribTop ?? 0.06) + i * (p.ribGap ?? 0.028);
-      const total = p.straight + (p.arc || 0);
-      if (s > total - 0.02) break;
-      const q = magOutline({ ...p, depth: p.depth - 0.014, yTop: p.yTop - s, straight: Math.min(0.009, Math.max(0.001, p.straight - s)), arc: s >= p.straight ? 0.009 : Math.max(0, 0.009 - (p.straight - s)) });
+      const s0 = (p.ribTop ?? 0.06) + i * (p.ribGap ?? 0.028);
+      if (s0 > total - 0.02) break;
+      const q = magOutline({ ...p, depth: p.depth - 0.012, s0, s1: s0 + 0.008 });
       m.side(mat, q.pts, w + 0.0018, { bevel: 0.0005, tint: p.tint });
     }
   }
